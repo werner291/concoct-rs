@@ -3,13 +3,16 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    crane.url = "github:ipetkov/crane";
   };
 
-  outputs = { self, nixpkgs }:
+  outputs = { self, nixpkgs, crane }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };
       python = pkgs.python3;
+
+      craneLib = crane.mkLib pkgs;
 
       bcbio-gff = pkgs.callPackage ./nix/bcbio-gff.nix {
         inherit (python.pkgs) buildPythonPackage fetchPypi setuptools biopython six;
@@ -70,6 +73,32 @@
           inherit testPython name covFile compFile clusters;
           src = ./.;
         };
+
+      # Crane: Rust crate with C FFI to the VBGMM library
+      rustSrc = pkgs.lib.cleanSourceWith {
+        src = ./.;
+        filter = path: type:
+          (craneLib.filterCargoSources path type)
+          || (builtins.match ".*c-concoct/.*" path != null);
+      };
+
+      commonArgs = {
+        src = rustSrc;
+        nativeBuildInputs = [ pkgs.pkg-config ];
+        buildInputs = [ pkgs.gsl ];
+        # Pin target-cpu to baseline to avoid AVX float divergence
+        RUSTFLAGS = "-C target-cpu=x86-64";
+      };
+
+      cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+
+      concoctRust = craneLib.buildPackage (commonArgs // {
+        inherit cargoArtifacts;
+      });
+
+      concoctRustTests = craneLib.cargoTest (commonArgs // {
+        inherit cargoArtifacts;
+      });
     in
     {
       packages.${system} = {
@@ -78,6 +107,8 @@
       };
 
       checks.${system} = {
+        rust-ffi = concoctRustTests;
+
         pytest-unit-input = mkPytestCheck "unit-input"
           "tests/test_unittest_input.py" {};
         pytest-cut-up-fasta = mkPytestCheck "cut-up-fasta"
@@ -118,6 +149,9 @@
           pkgs.bedtools
           pkgs.samtools
           pkgs.perl
+          pkgs.rustc
+          pkgs.cargo
+          pkgs.pkg-config
         ];
 
         shellHook = ''
