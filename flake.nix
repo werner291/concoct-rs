@@ -60,6 +60,11 @@
         python3 -m pytest ${testPath} -v --tb=short
         touch $out
       '');
+      mkDeterminismCheck = name: covFile: compFile: clusters:
+        pkgs.callPackage ./nix/determinism-check.nix {
+          inherit testPython name covFile compFile clusters;
+          src = ./.;
+        };
     in
     {
       packages.${system}.default = concoct;
@@ -79,6 +84,17 @@
           "tests/test_merge_cutup_clustering.py" { needsIntegrationData = true; };
         pytest-integration-scripts = mkPytestCheck "integration-scripts"
           "tests/test_integration_with_scripts.py" { needsIntegrationData = true; extraPackages = [ pkgs.samtools pkgs.bedtools pkgs.perl ]; };
+
+        # Verify CONCOCT produces identical output across repeated runs
+        # and across thread counts (1 vs 4), given the same seed.
+        determinism-small = mkDeterminismCheck "small"
+          "test_data/coverage"
+          "test_data/composition.fa"
+          10;
+        determinism-large = mkDeterminismCheck "large"
+          "test_data/large_contigs/coverage_table.tsv"
+          "test_data/large_contigs/contigs.fa"
+          20;
       };
 
       devShells.${system}.default = pkgs.mkShell {
