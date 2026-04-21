@@ -38,8 +38,8 @@
         ps.pytest
       ]);
 
-      mkPytestCheck = name: testPath: pkgs.runCommand "check-${name}" {
-        nativeBuildInputs = [ testPython ];
+      mkPytestCheck = name: testPath: { extraPackages ? [] }: pkgs.runCommand "check-${name}" {
+        nativeBuildInputs = [ testPython ] ++ extraPackages;
       } ''
         cp -r ${./.}/tests ${./.}/scripts $TMPDIR/
         chmod -R u+w $TMPDIR/tests
@@ -52,10 +52,14 @@
       packages.${system}.default = concoct;
 
       checks.${system} = {
-        pytest-unit-input = mkPytestCheck "unit-input" "tests/test_unittest_input.py";
-        pytest-cut-up-fasta = mkPytestCheck "cut-up-fasta" "tests/test_cut_up_fasta.py";
+        pytest-unit-input = mkPytestCheck "unit-input"
+          "tests/test_unittest_input.py" {};
+        pytest-cut-up-fasta = mkPytestCheck "cut-up-fasta"
+          "tests/test_cut_up_fasta.py" {};
         pytest-gen-input-table-bed = mkPytestCheck "gen-input-table-bed"
-          "tests/test_gen_input_table.py::TestCMD::test_with_bedfiles";
+          "tests/test_gen_input_table.py::TestCMD::test_with_bedfiles" {};
+        pytest-integration = mkPytestCheck "integration"
+          "tests/test_integration.py" { extraPackages = [ pkgs.perl ]; };
       };
 
       devShells.${system}.default = pkgs.mkShell {
