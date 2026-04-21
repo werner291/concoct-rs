@@ -41,6 +41,10 @@ e.g. Bishop PRML Equation 10.60>
 Proof: nix build .#checks.x86_64-linux.<test-name>
 ```
 
+Proof commands apply to the commit whose message they appear in. To verify, check
+out that commit and run the command. This means the proof must pass at that point
+in history, not just at HEAD.
+
 Do not write vague commit messages like "port function" or "add tests". The
 message must be specific enough that a reader can understand the change, its
 motivation, and how to verify it without reading the diff.
