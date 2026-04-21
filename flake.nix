@@ -86,12 +86,18 @@
           testPython
           pkgs.gsl
           pkgs.gcc
+          pkgs.bedtools
+          pkgs.samtools
+          pkgs.perl
         ];
 
         shellHook = ''
           export C_INCLUDE_PATH="${pkgs.gsl}/include:''${C_INCLUDE_PATH:-}"
           export LIBRARY_PATH="${pkgs.gsl}/lib:''${LIBRARY_PATH:-}"
           export LD_LIBRARY_PATH="${pkgs.gsl}/lib:''${LD_LIBRARY_PATH:-}"
+          if [ ! -e tests/test_data/integration_test_data ]; then
+            ln -s ${integrationTestData} tests/test_data/integration_test_data
+          fi
         '';
       };
     };
