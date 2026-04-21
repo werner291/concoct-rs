@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from nose.tools import assert_equal, assert_true, assert_almost_equal, nottest, assert_false
+from nose_compat import assert_equal, assert_true, assert_almost_equal, nottest, assert_false
 from os.path import isdir,isfile
 from os import listdir
 import os
@@ -16,15 +16,15 @@ tmp_dir_path = test_dir_path + '/nose_tmp_output'
 CWD = os.getcwd()
 
 class TestCMD(object):
-    def setUp(self):
+    def setup_method(self):
         """Create temporary dir if necessary,
         otherwise clear contents of it"""
         if not isdir(tmp_dir_path):
             os.mkdir(tmp_dir_path)
-        self.tearDown()
+        self.teardown_method()
         os.chdir(test_dir_path)
 
-    def tearDown(self):
+    def teardown_method(self):
         """remove temporary output files"""
         for d in os.listdir(tmp_dir_path):
             d_path = os.path.join(tmp_dir_path,d)

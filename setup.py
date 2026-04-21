@@ -51,8 +51,7 @@ setup(name='concoct',
                         'scipy>=0.12.0',
                         'pandas>=0.11.0',
                         'biopython>=1.62b',
-                        'scikit-learn>=0.13.1',
-                        'nose'],
+                        'scikit-learn>=0.13.1'],
       entry_points="""
       # -*- Entry points: -*-
       """,

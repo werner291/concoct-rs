@@ -26,7 +26,7 @@ lint:
 	flake8 concoct bin tests
 
 test:
-	nosetests
+	pytest tests/
 
 docs:
 	$(MAKE) -C doc clean

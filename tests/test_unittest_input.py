@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from nose.tools import assert_equal, assert_true
+from nose_compat import assert_equal, assert_true
 import numpy as np
 import pandas as p
 import os
@@ -7,7 +7,7 @@ from Bio import SeqIO
 from concoct.input import _normalize_per_sample, _normalize_per_contig, generate_feature_mapping, load_composition, _calculate_composition
 
 class TestInput(object):
-    def setUp(self):
+    def setup_method(self):
         self.C = p.DataFrame(np.array([[0., 0.7], [5.5, .7]]))
 
     def test_normalize_per_contig(self):

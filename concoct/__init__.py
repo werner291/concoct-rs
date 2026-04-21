@@ -1,2 +1,2 @@
-import pkg_resources  # part of setuptools
-__version__ = pkg_resources.require("concoct")[0].version
+from importlib.metadata import version as _version
+__version__ = _version("concoct")
