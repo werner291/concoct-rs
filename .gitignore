@@ -18,3 +18,10 @@ tests/nose_tmp_output
 tests/test_data/integration_test_data
 #ignore doc builds
 doc/build/*
+
+# Nix / direnv
+.direnv/
+result
+
+# Build artifacts
+*.so
