@@ -60,6 +60,11 @@
         python3 -m pytest ${testPath} -v --tb=short
         touch $out
       '');
+      dockerImage = pkgs.callPackage ./nix/docker-image.nix {
+        inherit (pkgs) dockerTools bashInteractive coreutils samtools bedtools perl;
+        inherit testPython;
+      };
+
       mkDeterminismCheck = name: covFile: compFile: clusters:
         pkgs.callPackage ./nix/determinism-check.nix {
           inherit testPython name covFile compFile clusters;
@@ -67,7 +72,10 @@
         };
     in
     {
-      packages.${system}.default = concoct;
+      packages.${system} = {
+        default = concoct;
+        docker = dockerImage;
+      };
 
       checks.${system} = {
         pytest-unit-input = mkPytestCheck "unit-input"
@@ -95,6 +103,11 @@
           "test_data/large_contigs/coverage_table.tsv"
           "test_data/large_contigs/contigs.fa"
           20;
+
+        docker = import ./nix/docker-test.nix {
+          inherit pkgs dockerImage;
+          src = ./.;
+        };
       };
 
       devShells.${system}.default = pkgs.mkShell {
