@@ -302,3 +302,56 @@ be ported depending on need.
   a bug and must be investigated before merging. Deliberate optimisation work
   happens after the translation is proven correct, in its own commit with its
   own benchmark proof.
+
+## Phase 0 retrospective
+
+Phase 0 (v0.1.0) established the reproducible baseline. Key findings:
+
+- **The original is deterministic.** Given the same seed and inputs, CONCOCT
+  produces identical output regardless of thread count or number of runs. This
+  is verified by `determinism-small` and `determinism-large` flake checks with
+  known sha256 hashes. The Rust rewrite must preserve this property.
+
+- **Float equivalence is relative to the pinned environment.** Upstream CONCOCT
+  does not pin dependency versions. Different sklearn/numpy/scipy versions may
+  produce different numerical results in the Python layer (PCA, normalization).
+  Our determinism guarantee applies within our nix-pinned environment only. The
+  C VBGMM core is the part where bit-exact equivalence matters for the rewrite.
+
+## Known risks and open questions
+
+Identified during Phase 0 review. Resolve before the relevant phase.
+
+**Before Phase 1:**
+
+- Audit C build flags for `-ffast-math` or `-funsafe-math-optimizations` — if
+  present, the C oracle is unreliable. (Done: flags are clean.)
+- Pin Rust `target-cpu` to `x86-64` baseline, not `native` — AVX can change
+  float results across machines.
+- Ensure C and Rust link against the same GSL nix derivation.
+- Set proptest cases to 10,000+. Filter NaN inputs with `prop_assume!` for C
+  functions that don't document NaN handling.
+- Define a concrete benchmark threshold for "slower is a failure."
+
+**Before Phase 2:**
+
+- Define what "one change" means for large composite functions (`mstep` is ~180
+  lines with BLAS calls). Options: split by logical block, port whole function,
+  or refactor the C first.
+- Establish policy for bugs found in the original during the rewrite: fix in C
+  and re-baseline, fix only in Rust, or adjust the proptest.
+- Match thread count between C and Rust for OMP parallel sections. Phase 0
+  showed these are embarrassingly parallel, but any parallel float accumulation
+  in Rust must preserve the accumulation order.
+
+**Before GSL replacement:**
+
+- GSL Cholesky replacement (nalgebra/faer) will likely diverge on
+  ill-conditioned inputs. The replacement commit must document which inputs
+  diverge and why that's acceptable, or prove bit-identity.
+
+**Phase 5:**
+
+- Porting the Python glue is a different kind of work than the C core. The
+  effort may equal Phases 1-4 combined. Acknowledge this rather than treating
+  it as a natural next step.

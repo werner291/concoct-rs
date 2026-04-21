@@ -163,6 +163,10 @@ Run individual tests with `nix build .#checks.x86_64-linux.<name>`. Each commit
 must cite the specific check that proves it — `nix flake check` is too global to
 serve as a proof.
 
+Do not inline package definitions or check derivations in flake.nix. External
+packages go in `nix/<name>.nix`, check templates go in `nix/<name>.nix`, and
+flake.nix calls them via `pkgs.callPackage` or `import`.
+
 ## Proactive critique
 
 Proactive critiques of approach, methodology violations, commit hygiene, and
@@ -180,3 +184,20 @@ immediately.
 - Do not add algorithmic improvements during a port. Translation first,
   optimisation later, each in its own commit.
 - Do not let tests depend on ambient system state. Nix or nothing.
+- Do not use dismissive language about the original codebase in commits, docs,
+  or release notes. Describe upstream choices neutrally — they were standard
+  for the era. Review tone before publishing anything external.
+- Do not use virtualenvs, pip, or any non-nix Python packaging in this project.
+  If a Python package needs to be available, build it as a nix derivation.
+- Do not add Co-Authored-By trailers to commits. Credit is in the README.
+- Do not explain *why code does what it does* in commit messages — state the
+  finding or the change, not your theory of the implementation. The reader can
+  read the code.
+- Do not over-explain in commit messages. The diff shows *what* changed. The
+  message explains *why* and *how to verify*. If a message has a bullet list
+  of files touched, it's too long.
+- Do not amend unrelated changes into a commit. If you notice something to fix
+  while working on something else, make it a separate commit or stash it.
+- Do not claim bit-identical output relative to upstream CONCOCT — they don't
+  pin dependency versions. Our determinism is within our pinned nix environment.
+  Bit-identical claims apply to C-vs-Rust within the same environment only.
