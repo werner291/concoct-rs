@@ -22,6 +22,7 @@ doc/build/*
 # Nix / direnv
 .direnv/
 result
+result-*
 
 # Build artifacts
 *.so

@@ -43,15 +43,23 @@
         ps.pytest
       ]);
 
-      mkPytestCheck = name: testPath: { extraPackages ? [] }: pkgs.runCommand "check-${name}" {
+      integrationTestData = pkgs.fetchzip {
+        url = "https://github.com/BinPro/integration_test_data/archive/v1.0.tar.gz";
+        hash = "sha256-nCecnv+eIqyCzD9v56dXur3QNBgW7RRa6BkNVRHcQFE=";
+      };
+
+      mkPytestCheck = name: testPath: { extraPackages ? [], needsIntegrationData ? false }: pkgs.runCommand "check-${name}" {
         nativeBuildInputs = [ testPython ] ++ extraPackages;
-      } ''
+      } (''
         cp -r ${./.}/tests ${./.}/scripts ${./.}/scgs $TMPDIR/
         chmod -R u+w $TMPDIR/tests
         cd $TMPDIR
+      '' + pkgs.lib.optionalString needsIntegrationData ''
+        ln -s ${integrationTestData} tests/test_data/integration_test_data
+      '' + ''
         python3 -m pytest ${testPath} -v --tb=short
         touch $out
-      '';
+      '');
     in
     {
       packages.${system}.default = concoct;
@@ -67,6 +75,10 @@
           "tests/test_integration.py" { extraPackages = [ pkgs.perl ]; };
         pytest-cog-table = mkPytestCheck "cog-table"
           "tests/test_COG_table.py" {};
+        pytest-merge-cutup = mkPytestCheck "merge-cutup"
+          "tests/test_merge_cutup_clustering.py" { needsIntegrationData = true; };
+        pytest-integration-scripts = mkPytestCheck "integration-scripts"
+          "tests/test_integration_with_scripts.py" { needsIntegrationData = true; extraPackages = [ pkgs.samtools pkgs.bedtools pkgs.perl ]; };
       };
 
       devShells.${system}.default = pkgs.mkShell {
