@@ -11,6 +11,10 @@
       pkgs = import nixpkgs { inherit system; };
       python = pkgs.python3;
 
+      bcbio-gff = pkgs.callPackage ./nix/bcbio-gff.nix {
+        inherit (python.pkgs) buildPythonPackage fetchPypi setuptools biopython six;
+      };
+
       concoct = python.pkgs.buildPythonPackage {
         pname = "concoct";
         version = "1.1.0";
@@ -35,13 +39,14 @@
 
       testPython = python.withPackages (ps: [
         concoct
+        bcbio-gff
         ps.pytest
       ]);
 
       mkPytestCheck = name: testPath: { extraPackages ? [] }: pkgs.runCommand "check-${name}" {
         nativeBuildInputs = [ testPython ] ++ extraPackages;
       } ''
-        cp -r ${./.}/tests ${./.}/scripts $TMPDIR/
+        cp -r ${./.}/tests ${./.}/scripts ${./.}/scgs $TMPDIR/
         chmod -R u+w $TMPDIR/tests
         cd $TMPDIR
         python3 -m pytest ${testPath} -v --tb=short
@@ -60,6 +65,8 @@
           "tests/test_gen_input_table.py" { extraPackages = [ pkgs.bedtools ]; };
         pytest-integration = mkPytestCheck "integration"
           "tests/test_integration.py" { extraPackages = [ pkgs.perl ]; };
+        pytest-cog-table = mkPytestCheck "cog-table"
+          "tests/test_COG_table.py" {};
       };
 
       devShells.${system}.default = pkgs.mkShell {
