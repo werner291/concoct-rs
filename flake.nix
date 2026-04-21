@@ -127,6 +127,17 @@
           if [ ! -e tests/test_data/integration_test_data ]; then
             ln -s ${integrationTestData} tests/test_data/integration_test_data
           fi
+
+          # Install pre-push hook that runs nix flake check
+          if [ -d .git ]; then
+            mkdir -p .git/hooks
+            cat > .git/hooks/pre-push << 'HOOK'
+#!/usr/bin/env bash
+echo "Running nix flake check before push..."
+nix flake check
+HOOK
+            chmod +x .git/hooks/pre-push
+          fi
         '';
       };
     };
