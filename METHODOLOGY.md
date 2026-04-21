@@ -234,15 +234,17 @@ Commit messages and test names must cite their sources:
 
 ## Rewrite phases
 
-### Phase 0: Scaffolding (current)
+### Phase 0: Scaffolding (complete)
 
 - [x] Nix flake with dev shell, Python package, and test infrastructure.
 - [x] Migrate test suite from nose to pytest.
-- [ ] Add Rust crate skeleton to the flake (cargo workspace, criterion, proptest).
-- [ ] Build C library as a standalone `.a`/`.so` for FFI from Rust tests.
-- [ ] First trivial FFI test: call `calcDist` from Rust, compare with Rust impl.
+- [x] Hook existing tests into `nix flake check`.
 
-### Phase 1: Leaf functions
+### Phase 1: Leaf functions (current)
+
+Set up the Rust crate skeleton (cargo workspace, criterion, proptest), build the
+C library as a standalone `.a`/`.so` for FFI from Rust tests, then port the leaf
+functions:
 
 Port the leaf functions from `c_vbgmm_fit.c` that have no dependencies on other
 CONCOCT functions:

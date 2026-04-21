@@ -30,19 +30,37 @@
           setuptools
         ];
 
-        # Tests require the full environment; run them via devShell instead
         doCheck = false;
       };
+
+      testPython = python.withPackages (ps: [
+        concoct
+        ps.pytest
+      ]);
+
+      mkPytestCheck = name: testPath: pkgs.runCommand "check-${name}" {
+        nativeBuildInputs = [ testPython ];
+      } ''
+        cp -r ${./.}/tests ${./.}/scripts $TMPDIR/
+        chmod -R u+w $TMPDIR/tests
+        cd $TMPDIR
+        python3 -m pytest ${testPath} -v --tb=short
+        touch $out
+      '';
     in
     {
       packages.${system}.default = concoct;
 
+      checks.${system} = {
+        pytest-unit-input = mkPytestCheck "unit-input" "tests/test_unittest_input.py";
+        pytest-cut-up-fasta = mkPytestCheck "cut-up-fasta" "tests/test_cut_up_fasta.py";
+        pytest-gen-input-table-bed = mkPytestCheck "gen-input-table-bed"
+          "tests/test_gen_input_table.py::TestCMD::test_with_bedfiles";
+      };
+
       devShells.${system}.default = pkgs.mkShell {
         packages = [
-          (python.withPackages (ps: [
-            concoct
-            ps.pytest
-          ]))
+          testPython
           pkgs.gsl
           pkgs.gcc
         ];
