@@ -122,6 +122,16 @@ and explain why — do not silently deviate.
 - Call both the C function (via FFI) and the Rust function.
 - Compare outputs with `f64::to_bits()` (not approximate equality).
 - Each ported function gets its own named test target.
+- **Always compare against the C oracle.** "It converges" or "assignments are
+  in range" is a sanity check, not an equivalence test. Every proptest must
+  call both implementations and assert bit-exact output. If the C wrapper is
+  complex, that's the cost of a proper test — don't cut corners.
+- **Case counts should match the function's complexity.** Leaf functions:
+  10,000 cases. Composites: 500-2,000. Training loop: 500. Don't let counts
+  drift down as functions get bigger — that's when bugs hide.
+- **For functions with state (mstep, calcZ, etc.)**, generate valid input
+  state by running the prior functions (e.g., run mstep to get valid
+  parameters for calcZ). Don't hand-construct cluster state.
 
 ### Benchmark comparisons
 
@@ -129,6 +139,18 @@ and explain why — do not silently deviate.
 - Run both C and Rust implementations on the same fixed dataset.
 - Slower Rust performance is considered a failure — investigate before merging.
 - Each ported function gets its own named benchmark target.
+- **Use realistic data sizes.** Toy benchmarks (32x4x4) are useful for
+  isolating codegen issues but misleading about real performance. Thread pool
+  overhead, allocation patterns, and cache effects only show up at scale.
+  Always include at least one size representative of a real metagenomics
+  dataset (hundreds to thousands of contigs, 16-64 dimensions, 8-32 clusters).
+- **Pin both thread pools before measurement.** Rayon: call
+  `ThreadPoolBuilder::new().build_global().ok()` and do a dummy parallel
+  iteration. OMP: pin thread count in the C wrapper (matching driverMP's
+  `nN/32+1` logic). Unpinned thread pools cause massive variance.
+- **Benchmark the training loop, not just leaf functions.** The training loop
+  is what users wait for. Leaf function benchmarks tell you about codegen;
+  training loop benchmarks tell you about real performance.
 
 ### Reproducibility
 
