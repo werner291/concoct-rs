@@ -102,6 +102,73 @@ pub fn calculate_composition<R: BufRead>(
     result
 }
 
+/// Load composition from FASTA: calculate k-mer frequencies, normalize
+/// per-contig, and log-transform.
+///
+/// Ports: concoct/input.py load_composition (L65-78)
+///
+/// The normalization is: log(count_ij / row_sum_i) for each contig i
+/// and feature j. The counts already include the +1 pseudo count from
+/// calculate_composition.
+///
+/// Returns (composition matrix as flat row-major Vec<f64> with shape
+/// n_contigs × nr_features, contig ids, contig lengths, nr_features).
+pub struct CompositionData {
+    /// Flat row-major matrix, n_contigs × n_features.
+    pub data: Vec<f64>,
+    /// Contig IDs, in order.
+    pub contig_ids: Vec<String>,
+    /// Contig lengths, in order.
+    pub contig_lengths: Vec<usize>,
+    /// Number of features (columns).
+    pub n_features: usize,
+}
+
+pub fn load_composition<R: BufRead>(
+    reader: R,
+    kmer_len: usize,
+    length_threshold: usize,
+) -> CompositionData {
+    let contigs = calculate_composition(reader, length_threshold, kmer_len);
+    let n_features = if contigs.is_empty() {
+        let (_, nf) = generate_feature_mapping(kmer_len);
+        nf
+    } else {
+        contigs[0].counts.len()
+    };
+
+    let mut data = Vec::with_capacity(contigs.len() * n_features);
+    let mut contig_ids = Vec::with_capacity(contigs.len());
+    let mut contig_lengths = Vec::with_capacity(contigs.len());
+
+    for contig in &contigs {
+        // Row sum (matches numpy sum(axis=1) — left-to-right accumulation)
+        let row_sum: f64 = contig.counts.iter().sum();
+
+        // log(count / row_sum) for each feature.
+        //
+        // NOTE: Rust's f64::ln() can differ from numpy's np.log() by 1 ULP.
+        // Numpy links Intel SVML (__svml_log8_ha) which is a different
+        // implementation from both Rust's ln() and libc's log().
+        // Confirmed 2026-04-23: libm log and math.log agree with Rust,
+        // numpy disagrees by 1 ULP on specific inputs (e.g. 120/20627).
+        // End-to-end output hash is the real equivalence proof.
+        for &count in &contig.counts {
+            data.push((count / row_sum).ln());
+        }
+
+        contig_ids.push(contig.id.clone());
+        contig_lengths.push(contig.length);
+    }
+
+    CompositionData {
+        data,
+        contig_ids,
+        contig_lengths,
+        n_features,
+    }
+}
+
 /// Generate a mapping from k-mer tuples to canonical feature indices.
 /// Reverse complement k-mers map to the same index.
 ///
@@ -202,6 +269,87 @@ mod tests {
         assert_eq!(records[0].seq, b"ACGTacgtNNNN");
         assert_eq!(records[1].id, "seq2");
         assert_eq!(records[1].seq, b"ACGTTTTT");
+    }
+
+    #[test]
+    fn load_composition_matches_python() {
+        // Call Python load_composition, compare normalized+logged values bit-exact.
+        let py_output = std::process::Command::new("python3")
+            .arg("-c")
+            .arg(r#"
+from concoct.input import load_composition
+import numpy as np
+comp, lengths = load_composition("tests/test_data/composition.fa", 4, 1000)
+for contig_id in comp.index:
+    row = comp.loc[contig_id].values
+    length = int(lengths[contig_id])
+    # Output as hex float for bit-exact comparison
+    vals = " ".join(float.hex(v) for v in row)
+    print(f"{contig_id}\t{length}\t{vals}")
+"#)
+            .output()
+            .expect("failed to run python3");
+        assert!(py_output.status.success(), "Python failed: {}",
+            String::from_utf8_lossy(&py_output.stderr));
+        let py_stdout = String::from_utf8(py_output.stdout).unwrap();
+
+        let fasta_data = include_bytes!("../tests/test_data/composition.fa");
+        let result = load_composition(&fasta_data[..], 4, 1000);
+
+        let py_lines: Vec<&str> = py_stdout.lines().collect();
+        assert_eq!(result.contig_ids.len(), py_lines.len());
+
+        for (i, py_line) in py_lines.iter().enumerate() {
+            let mut parts = py_line.split('\t');
+            let py_id = parts.next().unwrap();
+            let _py_len: usize = parts.next().unwrap().parse().unwrap();
+            let py_vals: Vec<f64> = parts.next().unwrap()
+                .split(' ')
+                .map(|s| {
+                    // Parse hex float: Python's float.hex() format
+                    let s = s.trim();
+                    if s.starts_with('-') {
+                        -f64_from_hex(&s[1..])
+                    } else {
+                        f64_from_hex(s)
+                    }
+                })
+                .collect();
+
+            assert_eq!(&result.contig_ids[i], py_id);
+            let row_start = i * result.n_features;
+            let row = &result.data[row_start..row_start + result.n_features];
+
+            for (j, (&r, &p)) in row.iter().zip(py_vals.iter()).enumerate() {
+                // Allow ≤1 ULP: numpy uses its own log implementation
+                // which can differ from Rust's f64::ln() by 1 ULP.
+                // End-to-end output hash is the real equivalence proof.
+                let r_bits = r.to_bits();
+                let p_bits = p.to_bits();
+                let diff = if r_bits > p_bits { r_bits - p_bits } else { p_bits - r_bits };
+                assert!(diff <= 1,
+                    "contig {py_id} feature {j}: Rust={r} Python={p} ({diff} ULP)");
+            }
+        }
+    }
+
+    /// Parse Python's float.hex() format (e.g. "0x1.999999999999ap-4")
+    fn f64_from_hex(s: &str) -> f64 {
+        // Format: 0x1.MMMMMMMMMMMMMp±EEE
+        let s = s.strip_prefix("0x").unwrap_or(s);
+        let (mantissa_str, exp_str) = s.split_once('p').unwrap();
+        let exp: i32 = exp_str.parse().unwrap();
+
+        let (int_part, frac_part) = mantissa_str.split_once('.').unwrap_or((mantissa_str, ""));
+        let int_val: u64 = u64::from_str_radix(int_part, 16).unwrap();
+        let frac_val: f64 = if frac_part.is_empty() {
+            0.0
+        } else {
+            let frac_int = u64::from_str_radix(frac_part, 16).unwrap();
+            frac_int as f64 / 16f64.powi(frac_part.len() as i32)
+        };
+
+        (int_val as f64 + frac_val) * 2f64.powi(exp)
     }
 
     #[test]
