@@ -99,6 +99,13 @@
       concoctRustTests = craneLib.cargoTest (commonArgs // {
         inherit cargoArtifacts;
       });
+
+      concoctRustBench = craneLib.mkCargoDerivation (commonArgs // {
+        inherit cargoArtifacts;
+        pnameSuffix = "-bench";
+        buildPhaseCargoCommand = "cargo bench --bench bench_leaf";
+        installPhaseCommand = "touch $out";
+      });
     in
     {
       packages.${system} = {
@@ -112,6 +119,7 @@
 
       checks.${system} = {
         rust-ffi = concoctRustTests;
+        rust-bench = concoctRustBench;
 
         pytest-unit-input = mkPytestCheck "unit-input"
           "tests/test_unittest_input.py" {};
