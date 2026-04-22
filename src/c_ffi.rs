@@ -37,7 +37,14 @@ extern "C" {
         covarOut: *mut f64, sigmaOut: *mut f64,
     );
 
-    /// Full training: initKMeans + gmmTrainVB_MP.
+    /// The real C entry point — full fit including compress.
+    /// c-concoct/c_vbgmm_fit.c:37-49
+    pub fn c_vbgmm_fit(
+        adX: *mut f64, nN: i32, nD: i32, nK: i32,
+        seed: i32, anAssign: *mut i32, nThreads: i32, nIter: i32,
+    );
+
+    /// Full training: initKMeans + gmmTrainVB_MP (no compress).
     pub fn ffi_trainFull(
         aadX: *const *const f64,
         nN: i32, nK: i32, nD: i32,

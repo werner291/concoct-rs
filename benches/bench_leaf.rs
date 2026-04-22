@@ -224,5 +224,36 @@ fn bench_train(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_calc_dist, bench_calc_sample_var, bench_update_means, bench_mstep, bench_perform_mstep, bench_train);
+fn bench_vbgmm_fit(c: &mut Criterion) {
+    let mut group = c.benchmark_group("vbgmm_fit");
+    group.sample_size(10); // full fit is slow
+    for (n, k, d) in [(512, 16, 32), (2048, 32, 64), (4096, 32, 80)] {
+        let data = make_matrix(n, d);
+        let label = format!("{n}x{k}x{d}");
+
+        group.bench_with_input(BenchmarkId::new("rust", &label), &(), |b, _| {
+            b.iter(|| vbgmm::vbgmm_fit(
+                black_box(&data), black_box(n), black_box(d),
+                black_box(k), black_box(1), black_box(1000),
+            ))
+        });
+
+        let n_threads = num_cpus::get().min(n / 32 + 1);
+        group.bench_with_input(BenchmarkId::new("c", &label), &(), |b, _| {
+            let mut c_data = data.clone();
+            let mut assign = vec![0i32; n];
+            b.iter(|| unsafe {
+                c_ffi::c_vbgmm_fit(
+                    black_box(c_data.as_mut_ptr()),
+                    black_box(n as i32), black_box(d as i32), black_box(k as i32),
+                    black_box(1), assign.as_mut_ptr(),
+                    black_box(n_threads as i32), black_box(1000),
+                )
+            })
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench_calc_dist, bench_calc_sample_var, bench_update_means, bench_mstep, bench_perform_mstep, bench_train, bench_vbgmm_fit);
 criterion_main!(benches);

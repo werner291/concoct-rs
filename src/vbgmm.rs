@@ -1048,3 +1048,108 @@ pub fn gmm_train_vb(
         vbl,
     }
 }
+
+/// Remove empty clusters (pi=0) from the responsibility matrix and
+/// re-index. Returns (new_z, new_assignments, new_n_clusters).
+///
+/// c-concoct/c_vbgmm_fit.c:429-505
+pub fn compress_cluster(
+    z: &[f64],
+    pi: &[f64],
+    n_samples: usize,
+    n_clusters: usize,
+) -> (Vec<f64>, Vec<i32>, usize) {
+    let nn = n_samples;
+    let nk = n_clusters;
+    let dn = nn as f64;
+
+    // Count active clusters
+    let active: Vec<usize> = (0..nk).filter(|&k| pi[k] > 0.0).collect();
+    let new_k = active.len();
+
+    // Build compressed Z
+    let mut new_z = vec![0.0f64; nn * new_k];
+    for i in 0..nn {
+        let z_row = &z[i * nk..(i + 1) * nk];
+        let new_row = &mut new_z[i * new_k..(i + 1) * new_k];
+        for (nc, &k) in active.iter().enumerate() {
+            new_row[nc] = z_row[k];
+        }
+    }
+
+    // Recalculate pi
+    let mut new_pi = vec![0.0f64; new_k];
+    for k in 0..new_k {
+        for i in 0..nn {
+            new_pi[k] += new_z[i * new_k + k];
+        }
+        new_pi[k] /= dn;
+    }
+
+    // Hard assignments: argmax per sample
+    let mut assignments = vec![0i32; nn];
+    for i in 0..nn {
+        let row = &new_z[i * new_k..(i + 1) * new_k];
+        let mut max_val = row[0];
+        let mut max_k = 0i32;
+        for k in 1..new_k {
+            if row[k] > max_val {
+                max_k = k as i32;
+                max_val = row[k];
+            }
+        }
+        assignments[i] = max_k;
+    }
+
+    (new_z, assignments, new_k)
+}
+
+/// Default VB parameters.
+pub const DEF_BETA0: f64 = 1.0e-3;
+pub const DEF_EPSILON: f64 = 1.0e-4;
+pub const DEF_MAX_ITER: usize = 1000;
+
+/// Full VBGMM fit — the public API matching c_vbgmm_fit().
+///
+/// Takes a flat row-major data matrix and returns cluster assignments.
+/// This is the function that replaces the C extension.
+///
+/// c-concoct/c_vbgmm_fit.c:37-49 (c_vbgmm_fit) + 51-155 (driverMP)
+pub fn vbgmm_fit(
+    data: &[f64],
+    n_samples: usize,
+    n_dims: usize,
+    n_clusters: usize,
+    seed: u64,
+    max_iter: usize,
+) -> Vec<i32> {
+    let nn = n_samples;
+    let nd = n_dims;
+
+    // Set up VB params (matches setVBParams)
+    let beta0 = DEF_BETA0;
+    let nu0 = nd as f64;
+    let (var, _) = calc_sample_var(data, nn, nd);
+    let mut inv_w0 = vec![0.0f64; nd * nd];
+    for i in 0..nd {
+        inv_w0[i * nd + i] = var[i] * (nd as f64);
+    }
+    let log_wishart_b = d_log_wishart_b(&inv_w0, nd, nu0, true);
+    let vb_params = VBParams { beta0, nu0, inv_w0 };
+
+    // Init + train
+    let (mut z, mut mstep_state) = init_kmeans(
+        nn, nd, n_clusters, data, seed, max_iter, &vb_params,
+    );
+    let result = gmm_train_vb(
+        nn, nd, n_clusters, data, &mut z, &mut mstep_state,
+        &vb_params, log_wishart_b, max_iter, DEF_EPSILON,
+    );
+
+    // Compress (remove empty clusters) and return assignments
+    let (_new_z, assignments, _new_k) = compress_cluster(
+        &result.z, &mstep_state.pi, nn, n_clusters,
+    );
+
+    assignments
+}
