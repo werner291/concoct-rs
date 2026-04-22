@@ -104,6 +104,10 @@
       packages.${system} = {
         default = concoct;
         docker = dockerImage;
+        codegen-calcdist = pkgs.callPackage ./nix/codegen-calcdist.nix {
+          inherit (pkgs) gcc gsl;
+          inherit craneLib rustSrc commonArgs cargoArtifacts;
+        };
       };
 
       checks.${system} = {

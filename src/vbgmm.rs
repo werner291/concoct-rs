@@ -4,7 +4,7 @@
 /// cluster centroid.
 ///
 /// c-concoct/c_vbgmm_fit.c:1300-1311
-#[inline(never)]
+#[inline]
 pub fn calc_dist(x: &[f64], mu: &[f64]) -> f64 {
     debug_assert_eq!(x.len(), mu.len());
     let mut dist = 0.0f64;
