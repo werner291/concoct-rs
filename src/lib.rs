@@ -6,6 +6,10 @@ pub mod c_ffi;
 /// Each function must produce bit-identical output to its C counterpart.
 pub mod vbgmm;
 
+/// Input loading: composition (FASTA + k-mer) and coverage (TSV).
+/// Ports concoct/input.py.
+pub mod input;
+
 /// PyO3 module exposing vbgmm.fit to Python.
 /// Replaces the Cython wrapper (c-concoct/vbgmm.pyx).
 #[cfg(feature = "python")]

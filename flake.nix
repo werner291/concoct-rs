@@ -79,7 +79,8 @@
         src = ./.;
         filter = path: type:
           (craneLib.filterCargoSources path type)
-          || (builtins.match ".*c-concoct/.*" path != null);
+          || (builtins.match ".*c-concoct/.*" path != null)
+          || (builtins.match ".*tests/test_data/.*" path != null);
       };
 
       commonArgs = {
