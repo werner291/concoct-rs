@@ -240,35 +240,27 @@ Commit messages and test names must cite their sources:
 - [x] Migrate test suite from nose to pytest.
 - [x] Hook existing tests into `nix flake check`.
 
-### Phase 1: Leaf functions (current)
+### Phase 1: Leaf functions (complete)
 
-Set up the Rust crate skeleton (cargo workspace, criterion, proptest), build the
-C library as a standalone `.a`/`.so` for FFI from Rust tests, then port the leaf
-functions:
+Rust crate skeleton with C FFI oracle, then six leaf functions ported:
+`calcDist`, `calcSampleVar`, `updateMeans` (pure Rust), `decomposeMatrix`,
+`dLogWishartB`, `dWishartExpectLogDet` (GSL via FFI).
 
-Port the leaf functions from `c_vbgmm_fit.c` that have no dependencies on other
-CONCOCT functions:
+### Phase 2: Composite functions (complete)
 
-- `calcDist` (L1300-1311): Euclidean distance. Trivial, good first target.
-- `calcSampleVar` (L202-227): Sample mean and variance per dimension.
-- `decomposeMatrix` (L507-528): Cholesky decomposition + inversion via GSL.
-- `dLogWishartB` (L1207-1236): Log Wishart normalisation constant.
-- `dWishartExpectLogDet` (L1238-1257): Expected log determinant of Wishart.
-- `updateMeans` (L1259-1298): Weighted cluster means from assignments.
+Five composite functions ported: `mstep`, `calcZ_MP`, `calcVBL_MP`,
+`performMStepMP`, `initKMeans`.
 
-Each function gets: one proptest, one benchmark, one commit.
+Key finding: idiomatic Rust (iterators, `chunks_exact`, `zip`) produces
+bit-identical float results to C-style index loops. The performance gap
+is LLVM's x86 loop vectorizer, not the language. Explicit AVX2 intrinsics
+on the covariance inner loop beat GCC by 26% (see notes/codegen-mstep.md).
 
-### Phase 2: Composite functions
+Functions that call GSL (`calcZ_MP`, `calcVBL_MP`, `decomposeMatrix`, etc.)
+are benchmarked only for the Rust wrapper overhead — meaningful C-vs-Rust
+benchmarks are deferred until GSL is replaced with Rust implementations.
 
-Port the functions that compose leaf functions:
-
-- `mstep` (L530-709): M-step for a single component (calls GSL BLAS).
-- `calcZ_MP` (L979-1046): E-step / responsibility calculation.
-- `calcVBL_MP` (L895-977): Variational lower bound (calls `eqnA`, `eqnB`).
-- `performMStepMP` (L711-751): Parallel M-step across components.
-- `initKMeans` (L753-821): K-means initialisation.
-
-### Phase 3: Training loop and driver
+### Phase 3: Training loop and driver (current)
 
 - `gmmTrainVB_MP` (L1048-1114): The EM/VB iteration loop.
 - `fitEM_MP` (L397-427): Top-level fit orchestration.
@@ -276,6 +268,18 @@ Port the functions that compose leaf functions:
 - `driverMP` (L51-155): The full driver.
 
 At this point, the Rust VBGMM can replace the C extension entirely.
+
+### Phase 4: Python integration layer
+
+Replace the Cython wrapper (`c-concoct/vbgmm.pyx`) with a PyO3 module that
+exposes the Rust VBGMM to the existing Python pipeline. The Python code
+(`concoct/`) remains unchanged — it just calls Rust instead of C.
+
+### Phase 5: Python layer migration
+
+Port the Python modules (`input.py`, `transform.py`, `output.py`, `parser.py`)
+into the Rust binary. The scripts (`cut_up_fasta.py`, etc.) may remain Python or
+be ported depending on need.
 
 ### Phase 4: Python integration layer
 

@@ -144,5 +144,33 @@ fn bench_mstep(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_calc_dist, bench_calc_sample_var, bench_update_means, bench_mstep);
+fn bench_perform_mstep(c: &mut Criterion) {
+    let mut group = c.benchmark_group("perform_mstep");
+    for (n, k, d) in [(32, 4, 4), (128, 8, 16), (512, 16, 32)] {
+        let data = make_matrix(n, d);
+        let z: Vec<f64> = (0..n * k).map(|i| {
+            if i % k == 0 { 0.7 } else { 0.3 / (k as f64 - 1.0) }
+        }).collect();
+        let mut inv_w0 = vec![0.0f64; d * d];
+        for i in 0..d { inv_w0[i * d + i] = 1.0; }
+
+        let vb_params = vbgmm::VBParams {
+            beta0: 0.001,
+            nu0: d as f64,
+            inv_w0: inv_w0.clone(),
+        };
+
+        let label = format!("{n}x{k}x{d}");
+
+        group.bench_with_input(BenchmarkId::new("rust", &label), &(), |b, _| {
+            b.iter(|| vbgmm::perform_mstep(
+                black_box(n), black_box(d), black_box(k),
+                black_box(&z), black_box(&data), black_box(&vb_params),
+            ))
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench_calc_dist, bench_calc_sample_var, bench_update_means, bench_mstep, bench_perform_mstep);
 criterion_main!(benches);
