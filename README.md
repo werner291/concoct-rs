@@ -1,28 +1,29 @@
 # concoct-rs
 
-A gradual rewrite of [CONCOCT](https://github.com/BinPro/CONCOCT) from Python+C
-into Rust.
+A reproducible repackaging of [CONCOCT](https://github.com/BinPro/CONCOCT),
+the metagenomic contig binner.
 
-CONCOCT is a program for unsupervised binning of metagenomic contigs by using
-nucleotide composition, coverage data in multiple samples and linkage data from
-paired end reads.
-
-## Status
-
-Phase 0 (scaffolding) is complete. The original Python+C codebase builds
-reproducibly under nix, all 24 upstream tests pass, and output determinism is
-verified. See [METHODOLOGY.md](METHODOLOGY.md) for the rewrite plan.
+CONCOCT bins metagenomic contigs using nucleotide composition, coverage data
+across multiple samples, and read-pair linkage. This project wraps the original
+Python+C implementation in a nix flake for reproducible builds, fixes
+compatibility issues with modern dependencies, and provides a Docker image.
 
 ## Installation
 
-### Docker (recommended for most users)
+### Docker
+
+```bash
+docker pull ghcr.io/werner291/concoct-rs:v0.1.0
+```
+
+Or build from source:
 
 ```bash
 nix build .#packages.x86_64-linux.docker
 docker load < result
 ```
 
-Then run concoct via:
+Then run:
 
 ```bash
 docker run --rm \
@@ -34,20 +35,34 @@ docker run --rm \
   --basename /output/
 ```
 
-### Nix dev shell
-
-Requires [nix](https://nixos.org/) with flakes enabled.
+### Nix
 
 ```bash
-# Enter the dev shell (via direnv, or manually)
-nix develop
+nix build              # build the concoct package
+./result/bin/concoct --help
 
-# Run all checks
-nix flake check
-
-# Run a specific check
-nix build .#checks.x86_64-linux.pytest-integration
+nix develop            # dev shell with all dependencies
+nix flake check        # run all 24 tests + determinism checks + Docker VM test
 ```
+
+## What this project fixes
+
+The upstream CONCOCT 1.1.0 has
+[30+ open issues](https://github.com/BinPro/CONCOCT/issues), many of which
+are installation failures and dependency breakage. This repackaging addresses:
+
+- **sklearn 1.8 compatibility** (issues #338, #323, #322, #321): adapted PCA
+  code for changes in DataFrame column type handling.
+- **nose test framework** (end-of-life): migrated to pytest.
+- **Dependency pinning**: all dependencies pinned via nix flake, including GSL,
+  Python scientific stack, bedtools, samtools, and bcbio-gff.
+- **Missing test data**: integration test data fetched as a pinned nix
+  derivation from BinPro/integration_test_data.
+- **Output determinism**: verified across thread counts and repeated runs on
+  two datasets.
+- **CI**: GitHub Actions replaces the defunct Travis CI configuration.
+
+The VBGMM clustering algorithm is untouched.
 
 ## Basic usage
 
@@ -57,8 +72,8 @@ Cut contigs into smaller parts:
 cut_up_fasta.py original_contigs.fa -c 10000 -o 0 --merge_last -b contigs_10K.bed > contigs_10K.fa
 ```
 
-Generate coverage depth table. This assumes the directory `mapping/` contains
-sorted and indexed BAM files mapped against the original contigs:
+Generate coverage depth table (assumes `mapping/` contains sorted and indexed
+BAM files):
 
 ```bash
 concoct_coverage_table.py contigs_10K.bed mapping/Sample*.sorted.bam > coverage_table.tsv
@@ -98,26 +113,23 @@ extract_fasta_bins.py original_contigs.fa concoct_output/clustering_merged.csv -
 | `determinism-large` | - | Output reproducibility on 4943-contig dataset |
 | `docker` | - | Docker image build, pipeline run, and hash verification in a NixOS VM |
 
-## Methodology
+## Rust rewrite (experimental)
 
-The rewrite follows a strict methodology documented in
-[METHODOLOGY.md](METHODOLOGY.md): one commit per change, one reproducible proof
-per commit, bit-identical float output, adversarial proptest equivalence tests,
-and benchmark comparisons.
+The `work` branch contains a bit-identical Rust reimplementation of the VBGMM
+core (c_vbgmm_fit.c). It matches C performance at production sizes and has
+proptest equivalence tests for every function. See
+[METHODOLOGY.md](METHODOLOGY.md) for the approach. The Rust port is not
+shipped — Phase 0 (this branch) is the released product.
 
 ## Citation
 
 If you use concoct-rs, **please cite the original CONCOCT paper first**. The
-algorithm is theirs; this project is a rewrite of their implementation. If you
-are quoting the algorithm itself (the variational Bayesian GMM for contig
-binning), the original paper is the authoritative reference.
+algorithm is theirs; this project is a repackaging of their implementation.
 
 > Alneberg, J., Bjarnason, B.S., de Bruijn, I., Schirmer, M., Quick, J.,
 > Ijaz, U.Z., Lahti, L., Loman, N.J., Andersson, A.F. & Quince, C. Binning
 > metagenomic contigs by coverage and composition. *Nat Methods* **11**,
 > 1144--1146 (2014). https://doi.org/10.1038/nmeth.3103
-
-You may additionally cite this repository for the Rust rewrite specifically.
 
 This project follows the principles of [rewrites.bio](https://rewrites.bio/):
 produce the same results as the original, cite the original, and disclose AI
@@ -130,5 +142,5 @@ assistance.
 
 ## Credits
 
-This rewrite is by [Werner Kroneman](https://github.com/werner291), with
+This repackaging is by [Werner Kroneman](https://github.com/werner291), with
 assistance from [Claude Code](https://claude.ai/claude-code) (Anthropic).
