@@ -99,6 +99,8 @@
 
       concoctRustTests = craneLib.cargoTest (commonArgs // {
         inherit cargoArtifacts;
+        # Tests that compare against Python oracle need the concoct package.
+        nativeBuildInputs = (commonArgs.nativeBuildInputs or []) ++ [ testPython ];
       });
 
       concoctRustBench = craneLib.mkCargoDerivation (commonArgs // {
