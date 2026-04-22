@@ -772,3 +772,64 @@ pub fn calc_vbl(
 
     bishop1 + bishop2 + bishop3 - bishop4 - bishop5
 }
+
+/// Result of performing the M-step across all components.
+pub struct PerformMStepResult {
+    pub mu: Vec<f64>,       // [nK][nD]
+    pub m: Vec<f64>,        // [nK][nD]
+    pub covar: Vec<f64>,    // [nK][nD*nD]
+    pub sigma: Vec<f64>,    // [nK][nD*nD]
+    pub pi: Vec<f64>,       // [nK]
+    pub beta: Vec<f64>,     // [nK]
+    pub nu: Vec<f64>,       // [nK]
+    pub l_det: Vec<f64>,    // [nK]
+}
+
+/// M-step across all components, then normalize pi.
+///
+/// Calls mstep per cluster (sequential — the C uses OMP parallel for, but
+/// the accumulation within each cluster is independent, so sequential
+/// produces the same result). Then normalizes pi by dividing by the sum.
+///
+/// c-concoct/c_vbgmm_fit.c:711-751
+pub fn perform_mstep(
+    n_samples: usize,
+    n_dims: usize,
+    n_clusters: usize,
+    z: &[f64],
+    data: &[f64],
+    vb_params: &VBParams,
+) -> PerformMStepResult {
+    let nd = n_dims;
+    let nk = n_clusters;
+
+    let mut all_mu = vec![0.0f64; nk * nd];
+    let mut all_m = vec![0.0f64; nk * nd];
+    let mut all_covar = vec![0.0f64; nk * nd * nd];
+    let mut all_sigma = vec![0.0f64; nk * nd * nd];
+    let mut pi_v = vec![0.0f64; nk];
+    let mut beta_v = vec![0.0f64; nk];
+    let mut nu_v = vec![0.0f64; nk];
+    let mut l_det_v = vec![0.0f64; nk];
+
+    for k in 0..nk {
+        let r = mstep(k, n_samples, nd, nk, z, data, vb_params);
+        all_mu[k * nd..(k + 1) * nd].copy_from_slice(&r.mu);
+        all_m[k * nd..(k + 1) * nd].copy_from_slice(&r.m);
+        all_covar[k * nd * nd..(k + 1) * nd * nd].copy_from_slice(&r.covar);
+        all_sigma[k * nd * nd..(k + 1) * nd * nd].copy_from_slice(&r.sigma);
+        pi_v[k] = r.pi;
+        beta_v[k] = r.beta;
+        nu_v[k] = r.nu;
+        l_det_v[k] = r.l_det;
+    }
+
+    // Normalize pi — sequential sum then divide, matching C order
+    let d_np: f64 = pi_v.iter().sum();
+    pi_v.iter_mut().for_each(|p| *p /= d_np);
+
+    PerformMStepResult {
+        mu: all_mu, m: all_m, covar: all_covar, sigma: all_sigma,
+        pi: pi_v, beta: beta_v, nu: nu_v, l_det: l_det_v,
+    }
+}
