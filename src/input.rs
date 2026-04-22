@@ -3,6 +3,49 @@
 // Ports concoct/input.py. Each function cites the Python source it replaces.
 
 use std::collections::HashMap;
+use std::io::BufRead;
+
+/// A FASTA record: id (first word after '>') and sequence bytes.
+pub struct FastaRecord {
+    pub id: String,
+    pub seq: Vec<u8>,
+}
+
+/// Parse FASTA records from a reader.
+/// Matches BioPython's SeqIO.parse(file, "fasta") behavior:
+/// - id is the first whitespace-delimited token after '>'
+/// - sequence lines are stripped of leading/trailing whitespace
+/// - blank lines are ignored
+/// - case is preserved (caller uppercases if needed)
+pub fn parse_fasta<R: BufRead>(reader: R) -> Vec<FastaRecord> {
+    let mut records = Vec::new();
+    let mut current_id: Option<String> = None;
+    let mut current_seq: Vec<u8> = Vec::new();
+
+    for line in reader.lines() {
+        let line = line.expect("error reading FASTA");
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some(header) = trimmed.strip_prefix('>') {
+            if let Some(id) = current_id.take() {
+                records.push(FastaRecord { id, seq: current_seq });
+                current_seq = Vec::new();
+            }
+            current_id = Some(
+                header.split_whitespace().next().unwrap_or("").to_string()
+            );
+        } else {
+            current_seq.extend_from_slice(trimmed.as_bytes());
+        }
+    }
+    if let Some(id) = current_id {
+        records.push(FastaRecord { id, seq: current_seq });
+    }
+
+    records
+}
 
 /// Generate a mapping from k-mer tuples to canonical feature indices.
 /// Reverse complement k-mers map to the same index.
@@ -53,6 +96,58 @@ pub fn generate_feature_mapping(kmer_len: usize) -> (HashMap<Vec<u8>, usize>, us
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fasta_parser_matches_biopython() {
+        // Compare id and sequence length for every record against
+        // BioPython's SeqIO.parse output on the same file.
+        let reference = include_str!("../tests/test_data/fasta_reference.tsv");
+        let fasta_data = include_bytes!("../tests/test_data/composition.fa");
+        let records = parse_fasta(&fasta_data[..]);
+
+        let ref_entries: Vec<(&str, usize)> = reference
+            .lines()
+            .map(|line| {
+                let mut parts = line.split('\t');
+                let id = parts.next().unwrap();
+                let len: usize = parts.next().unwrap().parse().unwrap();
+                (id, len)
+            })
+            .collect();
+
+        assert_eq!(
+            records.len(),
+            ref_entries.len(),
+            "record count mismatch: Rust={} Python={}",
+            records.len(),
+            ref_entries.len()
+        );
+
+        for (record, (expected_id, expected_len)) in records.iter().zip(ref_entries.iter()) {
+            assert_eq!(
+                &record.id, expected_id,
+                "id mismatch at record {expected_id}"
+            );
+            assert_eq!(
+                record.seq.len(),
+                *expected_len,
+                "length mismatch for {expected_id}: Rust={} Python={expected_len}",
+                record.seq.len()
+            );
+        }
+    }
+
+    #[test]
+    fn fasta_parser_edge_cases() {
+        let input = b">seq1 some description\nACGT\nacgt\n\nNNNN\n>seq2\n  ACGT  \n\tTTTT\n";
+        let records = parse_fasta(&input[..]);
+
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].id, "seq1");
+        assert_eq!(records[0].seq, b"ACGTacgtNNNN");
+        assert_eq!(records[1].id, "seq2");
+        assert_eq!(records[1].seq, b"ACGTTTTT");
+    }
 
     #[test]
     fn feature_mapping_kmer2() {
