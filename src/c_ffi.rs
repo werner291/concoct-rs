@@ -16,6 +16,15 @@ extern "C" {
     /// c-concoct/c_vbgmm_fit.c:507-528
     pub fn decomposeMatrix(ptSigmaMatrix: *mut GslMatrix, nD: i32) -> f64;
 
+    /// Log Wishart normalisation constant.
+    /// c-concoct/c_vbgmm_fit.c:1207-1236
+    pub fn dLogWishartB(ptInvW: *mut GslMatrix, nD: i32, dNu: f64, bInv: i32) -> f64;
+
+    /// Expected log-determinant of a Wishart distribution.
+    /// c-concoct/c_vbgmm_fit.c:1238-1257
+    /// Note: modifies ptW in-place (calls decomposeMatrix on it).
+    pub fn dWishartExpectLogDet(ptW: *mut GslMatrix, dNu: f64, nD: i32) -> f64;
+
     /// Recompute cluster centroids from assignments.
     /// c-concoct/ffi_wrappers.c (wraps c_vbgmm_fit.c:1259-1298)
     pub fn ffi_updateMeans(
@@ -45,6 +54,8 @@ extern "C" {
     pub fn gsl_matrix_set(m: *mut GslMatrix, i: usize, j: usize, x: f64);
     pub fn gsl_matrix_get(m: *const GslMatrix, i: usize, j: usize) -> f64;
     pub fn gsl_matrix_memcpy(dest: *mut GslMatrix, src: *const GslMatrix) -> i32;
+    pub fn gsl_sf_lngamma(x: f64) -> f64;
+    pub fn gsl_sf_psi(x: f64) -> f64;
 }
 
 /// Helper to create a GSL matrix from a flat row-major slice.

@@ -99,6 +99,84 @@ pub fn decompose_matrix(matrix: &mut [f64], n: usize) -> f64 {
     }
 }
 
+/// Log Wishart normalisation constant.
+///
+/// Computes the log of the normalisation constant B for a Wishart
+/// distribution. Used in the variational lower bound calculation.
+/// `b_inv`: if true, the input is the inverse scale matrix.
+///
+/// c-concoct/c_vbgmm_fit.c:1207-1236
+pub fn d_log_wishart_b(matrix: &[f64], n: usize, nu: f64, b_inv: bool) -> f64 {
+    use crate::c_ffi;
+    let d = n as f64;
+
+    unsafe {
+        // Copy matrix — decomposeMatrix modifies in-place
+        let gsl_m = c_ffi::gsl_matrix_from_flat(matrix, n);
+        let log_det = decompose_matrix_gsl(gsl_m, n);
+
+        let ret = if b_inv {
+            0.5 * nu * log_det
+        } else {
+            -0.5 * nu * log_det
+        };
+
+        let mut t = 0.5 * nu * d * (2.0f64).ln();
+        t += 0.25 * d * (d - 1.0) * std::f64::consts::PI.ln();
+
+        for i in 0..n {
+            t += c_ffi::gsl_sf_lngamma(0.5 * (nu - i as f64));
+        }
+
+        c_ffi::gsl_matrix_free(gsl_m);
+        ret - t
+    }
+}
+
+/// Expected log-determinant of a Wishart distribution.
+///
+/// Note: modifies `matrix` in-place via decomposeMatrix (Cholesky + invert).
+///
+/// c-concoct/c_vbgmm_fit.c:1238-1257
+pub fn d_wishart_expect_log_det(matrix: &mut [f64], n: usize, nu: f64) -> f64 {
+    use crate::c_ffi;
+    let d = n as f64;
+
+    // The C code allocates a copy but then decomposes the original.
+    // We match that behaviour: decompose matrix in-place.
+    let log_det = decompose_matrix(matrix, n);
+
+    let mut ret = d * (2.0f64).ln() + log_det;
+
+    for i in 0..n {
+        ret += unsafe { c_ffi::gsl_sf_psi(0.5 * (nu - i as f64)) };
+    }
+
+    ret
+}
+
+/// Internal: call decomposeMatrix on a GSL matrix directly.
+/// Used by d_log_wishart_b which needs GSL matrix allocation anyway.
+unsafe fn decompose_matrix_gsl(m: *mut crate::c_ffi::GslMatrix, n: usize) -> f64 {
+    use crate::c_ffi;
+    extern "C" {
+        fn gsl_linalg_cholesky_decomp(m: *mut crate::c_ffi::GslMatrix) -> i32;
+        fn gsl_linalg_cholesky_invert(m: *mut crate::c_ffi::GslMatrix) -> i32;
+    }
+
+    let status = gsl_linalg_cholesky_decomp(m);
+    assert!(status == 0, "Cholesky decomposition failed with status {status}");
+
+    let mut det = 0.0f64;
+    for l in 0..n {
+        let dt = c_ffi::gsl_matrix_get(m, l, l);
+        det += 2.0 * dt.ln();
+    }
+
+    gsl_linalg_cholesky_invert(m);
+    det
+}
+
 /// Recompute cluster centroids from hard assignments.
 ///
 /// For each cluster k, the mean is the average of all data points assigned
