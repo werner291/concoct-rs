@@ -4,6 +4,7 @@ fn main() {
     // No -ffast-math — IEEE 754 semantics are required.
     cc::Build::new()
         .file("c-concoct/c_vbgmm_fit.c")
+        .file("c-concoct/ffi_wrappers.c")
         .flag("-O3")
         .flag("-std=c99")
         .flag("-fopenmp")
@@ -17,4 +18,5 @@ fn main() {
     println!("cargo:rustc-link-lib=gomp");
     println!("cargo:rerun-if-changed=c-concoct/c_vbgmm_fit.c");
     println!("cargo:rerun-if-changed=c-concoct/c_vbgmm_fit.h");
+    println!("cargo:rerun-if-changed=c-concoct/ffi_wrappers.c");
 }

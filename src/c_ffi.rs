@@ -10,8 +10,16 @@ extern "C" {
 
     /// Per-dimension sample mean and variance.
     /// c-concoct/c_vbgmm_fit.c:202-227
-    /// Takes t_Data* as first arg — see CalcSampleVarHelper for safe usage.
     pub fn calcSampleVar(ptData: *const CData, adVar: *mut f64, adMu: *mut f64);
+
+    /// Recompute cluster centroids from assignments.
+    /// c-concoct/ffi_wrappers.c (wraps c_vbgmm_fit.c:1259-1298)
+    pub fn ffi_updateMeans(
+        aadX: *const *const f64,
+        nN: i32, nK: i32, nD: i32,
+        anMaxZ: *const i32, anW: *const i32,
+        aadMu: *const *mut f64,
+    );
 }
 
 /// Mirror of t_Data from c_vbgmm_fit.h, used to call C functions via FFI.

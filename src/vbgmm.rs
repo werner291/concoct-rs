@@ -48,3 +48,59 @@ pub fn calc_sample_var(data: &[f64], n_samples: usize, n_dims: usize) -> (Vec<f6
 
     (var, mu)
 }
+
+/// Recompute cluster centroids from hard assignments.
+///
+/// For each cluster k, the mean is the average of all data points assigned
+/// to it. Empty clusters get a zero mean.
+///
+/// `data` is row-major: `data[n * n_dims + j]` is sample n, dimension j.
+/// `assignments[n]` is the cluster index for sample n.
+/// `weights[k]` is the number of samples assigned to cluster k.
+/// `mu` is caller-allocated output, length `n_clusters * n_dims` (row-major).
+///
+/// c-concoct/c_vbgmm_fit.c:1259-1298
+pub fn update_means(
+    data: &[f64],
+    n_samples: usize,
+    n_clusters: usize,
+    n_dims: usize,
+    assignments: &[i32],
+    weights: &[i32],
+    mu: &mut [f64],
+) {
+    debug_assert_eq!(data.len(), n_samples * n_dims);
+    debug_assert_eq!(assignments.len(), n_samples);
+    debug_assert_eq!(weights.len(), n_clusters);
+    debug_assert_eq!(mu.len(), n_clusters * n_dims);
+
+    // Phase 1: zero.
+    for v in mu.iter_mut() {
+        *v = 0.0;
+    }
+
+    // Phase 2: accumulate. Outer loop over samples, inner over dims.
+    for i in 0..n_samples {
+        let nz = assignments[i] as usize;
+        let data_row = &data[i * n_dims..i * n_dims + n_dims];
+        let mu_row = &mut mu[nz * n_dims..nz * n_dims + n_dims];
+        for j in 0..n_dims {
+            mu_row[j] += data_row[j];
+        }
+    }
+
+    // Phase 3: normalise.
+    for k in 0..n_clusters {
+        let mu_row = &mut mu[k * n_dims..k * n_dims + n_dims];
+        if weights[k] > 0 {
+            let w = weights[k] as f64;
+            for j in 0..n_dims {
+                mu_row[j] /= w;
+            }
+        } else {
+            for j in 0..n_dims {
+                mu_row[j] = 0.0;
+            }
+        }
+    }
+}

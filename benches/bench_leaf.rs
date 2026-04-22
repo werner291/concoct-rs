@@ -51,5 +51,43 @@ fn bench_calc_sample_var(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_calc_dist, bench_calc_sample_var);
+fn bench_update_means(c: &mut Criterion) {
+    let mut group = c.benchmark_group("update_means");
+    for (n, k, d) in [(64, 8, 16), (256, 16, 32), (1024, 32, 64)] {
+        let data = make_matrix(n, d);
+        let assignments: Vec<i32> = (0..n).map(|i| (i % k) as i32).collect();
+        let mut weights = vec![0i32; k];
+        for &a in &assignments { weights[a as usize] += 1; }
+
+        let label = format!("{n}x{k}x{d}");
+
+        group.bench_with_input(BenchmarkId::new("rust", &label), &(), |b, _| {
+            let mut mu = vec![0.0f64; k * d];
+            b.iter(|| vbgmm::update_means(
+                black_box(&data), black_box(n), black_box(k), black_box(d),
+                black_box(&assignments), black_box(&weights), black_box(&mut mu),
+            ))
+        });
+        group.bench_with_input(BenchmarkId::new("c", &label), &(), |b, _| {
+            let data_ptrs: Vec<*const f64> = (0..n)
+                .map(|i| data[i * d..].as_ptr())
+                .collect();
+            let mut c_mu_flat = vec![0.0f64; k * d];
+            let c_mu_ptrs: Vec<*mut f64> = (0..k)
+                .map(|ki| c_mu_flat[ki * d..].as_mut_ptr())
+                .collect();
+            b.iter(|| unsafe {
+                c_ffi::ffi_updateMeans(
+                    black_box(data_ptrs.as_ptr()),
+                    black_box(n as i32), black_box(k as i32), black_box(d as i32),
+                    black_box(assignments.as_ptr()), black_box(weights.as_ptr()),
+                    black_box(c_mu_ptrs.as_ptr()),
+                )
+            })
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench_calc_dist, bench_calc_sample_var, bench_update_means);
 criterion_main!(benches);
