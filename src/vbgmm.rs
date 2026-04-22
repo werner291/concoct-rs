@@ -482,88 +482,94 @@ pub fn calc_z(
     l_det: &[f64],
     beta: &[f64],
 ) {
-    use crate::c_ffi;
+    use rayon::prelude::*;
 
     let dd = n_dims as f64;
     let nk = n_clusters;
     let nd = n_dims;
 
-    // CblasLower = 122 in GSL
+    use crate::c_ffi;
+    use rayon::prelude::*;
     const CBLAS_LOWER: i32 = 122;
 
-    for i in 0..n_samples {
-        let data_row = &data[i * nd..(i + 1) * nd];
-        let z_row = &mut z[i * nk..(i + 1) * nk];
+    // Pre-build GSL sigma matrices (read-only, shared across threads).
+    // Wrap raw pointers for Send — GSL dsymv only reads the matrix.
+    struct SendPtr(*mut c_ffi::GslMatrix);
+    unsafe impl Send for SendPtr {}
+    unsafe impl Sync for SendPtr {}
 
-        let mut dist = vec![0.0f64; nk];
-        let mut d_min_dist = f64::MAX;
+    let gsl_sigmas: Vec<SendPtr> = (0..nk).map(|k| {
+        SendPtr(unsafe { c_ffi::gsl_matrix_from_flat(&sigma[k * nd * nd..], nd) })
+    }).collect();
 
-        // Phase 1: compute distance for each active cluster
-        for k in 0..nk {
-            if pi[k] > 0.0 {
-                unsafe {
-                    let pt_diff = c_ffi::gsl_vector_alloc(nd);
-                    let pt_res = c_ffi::gsl_vector_alloc(nd);
+    // Parallel over samples — same as C's #pragma omp parallel for
+    z.par_chunks_mut(nk)
+        .zip(data.par_chunks(nd))
+        .for_each(|(z_row, data_row)| {
+            // Per-thread GSL vectors (same as C's per-OMP-thread alloc)
+            let pt_diff = unsafe { c_ffi::gsl_vector_alloc(nd) };
+            let pt_res = unsafe { c_ffi::gsl_vector_alloc(nd) };
 
-                    // diff = data[i] - m[k]
-                    let m_row = &m[k * nd..(k + 1) * nd];
-                    for l in 0..nd {
-                        c_ffi::gsl_vector_set(pt_diff, l, data_row[l] - m_row[l]);
+            let mut dist = vec![0.0f64; nk];
+            let mut d_min_dist = f64::MAX;
+
+            for k in 0..nk {
+                if pi[k] > 0.0 {
+                    unsafe {
+                        let m_row = &m[k * nd..(k + 1) * nd];
+                        for l in 0..nd {
+                            c_ffi::gsl_vector_set(pt_diff, l, data_row[l] - m_row[l]);
+                        }
+
+                        c_ffi::gsl_blas_dsymv(CBLAS_LOWER, 1.0, gsl_sigmas[k].0,
+                                              pt_diff, 0.0, pt_res);
+                        c_ffi::gsl_blas_ddot(pt_diff, pt_res, &mut dist[k]);
                     }
 
-                    // Build GSL matrix view for sigma[k]
-                    let sigma_k = &sigma[k * nd * nd..(k + 1) * nd * nd];
-                    let gsl_sigma = c_ffi::gsl_matrix_from_flat(sigma_k, nd);
+                    dist[k] *= nu[k];
+                    dist[k] -= l_det[k];
+                    dist[k] += dd / beta[k];
 
-                    // res = sigma[k] * diff  (symmetric matrix-vector product)
-                    c_ffi::gsl_blas_dsymv(CBLAS_LOWER, 1.0, gsl_sigma, pt_diff, 0.0, pt_res);
-
-                    // dist[k] = diff^T * res
-                    c_ffi::gsl_blas_ddot(pt_diff, pt_res, &mut dist[k]);
-
-                    c_ffi::gsl_matrix_free(gsl_sigma);
-                    c_ffi::gsl_vector_free(pt_res);
-                    c_ffi::gsl_vector_free(pt_diff);
-                }
-
-                // Scale and shift — order matches C exactly
-                dist[k] *= nu[k];
-                dist[k] -= l_det[k];
-                dist[k] += dd / beta[k];
-
-                if dist[k] < d_min_dist {
-                    d_min_dist = dist[k];
+                    if dist[k] < d_min_dist {
+                        d_min_dist = dist[k];
+                    }
                 }
             }
-        }
 
-        // Phase 2: unnormalized responsibilities
-        let mut d_total_z = 0.0f64;
-        for k in 0..nk {
-            if pi[k] > 0.0 {
-                z_row[k] = pi[k] * (-0.5 * (dist[k] - d_min_dist)).exp();
-                d_total_z += z_row[k];
-            } else {
-                z_row[k] = 0.0;
-            }
-        }
-
-        // Phase 3: zero tiny responsibilities, recompute total
-        let mut d_n_total_z = 0.0f64;
-        for k in 0..nk {
-            let d_f = z_row[k] / d_total_z;
-            if d_f < MIN_Z {
-                z_row[k] = 0.0;
-            }
-            d_n_total_z += z_row[k];
-        }
-
-        // Phase 4: normalize
-        if d_n_total_z > 0.0 {
+            let mut d_total_z = 0.0f64;
             for k in 0..nk {
-                z_row[k] /= d_n_total_z;
+                if pi[k] > 0.0 {
+                    z_row[k] = pi[k] * (-0.5 * (dist[k] - d_min_dist)).exp();
+                    d_total_z += z_row[k];
+                } else {
+                    z_row[k] = 0.0;
+                }
             }
-        }
+
+            let mut d_n_total_z = 0.0f64;
+            for k in 0..nk {
+                let d_f = z_row[k] / d_total_z;
+                if d_f < MIN_Z {
+                    z_row[k] = 0.0;
+                }
+                d_n_total_z += z_row[k];
+            }
+
+            if d_n_total_z > 0.0 {
+                for k in 0..nk {
+                    z_row[k] /= d_n_total_z;
+                }
+            }
+
+            unsafe {
+                c_ffi::gsl_vector_free(pt_res);
+                c_ffi::gsl_vector_free(pt_diff);
+            }
+        });
+
+    // Free shared sigma matrices
+    unsafe {
+        for s in &gsl_sigmas { c_ffi::gsl_matrix_free(s.0); }
     }
 }
 
@@ -800,9 +806,21 @@ pub fn perform_mstep(
     data: &[f64],
     vb_params: &VBParams,
 ) -> PerformMStepResult {
+    use rayon::prelude::*;
+
     let nd = n_dims;
     let nk = n_clusters;
 
+    // Parallel over clusters — same as C's #pragma omp parallel for.
+    // Each mstep(k) is independent: reads shared z/data, writes only to
+    // its own output. No shared accumulators, so parallelism doesn't
+    // change float results.
+    let results: Vec<MStepResult> = (0..nk)
+        .into_par_iter()
+        .map(|k| mstep(k, n_samples, nd, nk, z, data, vb_params))
+        .collect();
+
+    // Scatter into flat arrays
     let mut all_mu = vec![0.0f64; nk * nd];
     let mut all_m = vec![0.0f64; nk * nd];
     let mut all_covar = vec![0.0f64; nk * nd * nd];
@@ -812,8 +830,7 @@ pub fn perform_mstep(
     let mut nu_v = vec![0.0f64; nk];
     let mut l_det_v = vec![0.0f64; nk];
 
-    for k in 0..nk {
-        let r = mstep(k, n_samples, nd, nk, z, data, vb_params);
+    for (k, r) in results.into_iter().enumerate() {
         all_mu[k * nd..(k + 1) * nd].copy_from_slice(&r.mu);
         all_m[k * nd..(k + 1) * nd].copy_from_slice(&r.m);
         all_covar[k * nd * nd..(k + 1) * nd * nd].copy_from_slice(&r.covar);
@@ -939,4 +956,95 @@ pub fn init_kmeans(
     let mstep_result = perform_mstep(nn, nd, nk, &z, data, vb_params);
 
     (z, mstep_result)
+}
+
+/// EM/VB training result.
+pub struct TrainResult {
+    /// Soft responsibilities, `[n_samples][n_clusters]`.
+    pub z: Vec<f64>,
+    /// Hard cluster assignments, length `n_samples`.
+    pub assignments: Vec<i32>,
+    /// Final variational lower bound.
+    pub vbl: f64,
+}
+
+/// EM/VB training loop (Bishop Chapter 10).
+///
+/// Iterates: M-step → E-step → VBL until convergence (delta < epsilon)
+/// or max_iter. Returns soft responsibilities, hard assignments, and
+/// the final VBL.
+///
+/// c-concoct/c_vbgmm_fit.c:1048-1114
+pub fn gmm_train_vb(
+    n_samples: usize,
+    n_dims: usize,
+    n_clusters: usize,
+    data: &[f64],
+    z: &mut Vec<f64>,
+    mstep_state: &mut PerformMStepResult,
+    vb_params: &VBParams,
+    log_wishart_b: f64,
+    max_iter: usize,
+    epsilon: f64,
+) -> TrainResult {
+    let nn = n_samples;
+    let nk = n_clusters;
+    let nd = n_dims;
+
+    // Initial E-step + VBL
+    calc_z(nn, nd, nk, data, z, &mstep_state.m, &mstep_state.sigma,
+           &mstep_state.pi, &mstep_state.nu, &mstep_state.l_det, &mstep_state.beta);
+
+    let mut vbl = calc_vbl(nn, nd, nk, z, &mstep_state.mu, &mstep_state.m,
+                           &mstep_state.covar, &mut mstep_state.sigma,
+                           &mstep_state.pi, &mstep_state.beta, &mstep_state.nu,
+                           &mstep_state.l_det, &vb_params.inv_w0,
+                           vb_params.beta0, vb_params.nu0, log_wishart_b);
+
+    let mut n_iter = 0;
+    let mut delta = f64::MAX;
+
+    while n_iter < max_iter && delta > epsilon {
+        // M-step
+        *mstep_state = perform_mstep(nn, nd, nk, z, data, vb_params);
+
+        // E-step
+        calc_z(nn, nd, nk, data, z, &mstep_state.m, &mstep_state.sigma,
+               &mstep_state.pi, &mstep_state.nu, &mstep_state.l_det, &mstep_state.beta);
+
+        // VBL
+        let last_vbl = vbl;
+        vbl = calc_vbl(nn, nd, nk, z, &mstep_state.mu, &mstep_state.m,
+                       &mstep_state.covar, &mut mstep_state.sigma,
+                       &mstep_state.pi, &mstep_state.beta, &mstep_state.nu,
+                       &mstep_state.l_det, &vb_params.inv_w0,
+                       vb_params.beta0, vb_params.nu0, log_wishart_b);
+        delta = (vbl - last_vbl).abs();
+
+        // C prints to stderr here — we skip it to keep the Rust side
+        // free of I/O overhead in benchmarks. The convergence values
+        // are verified by the proptest instead.
+        n_iter += 1;
+    }
+
+    // Hard assignments: argmax over Z per sample
+    let mut assignments = vec![0i32; nn];
+    for i in 0..nn {
+        let z_row = &z[i * nk..(i + 1) * nk];
+        let mut max_z_val = z_row[0];
+        let mut max_k = 0i32;
+        for k in 1..nk {
+            if z_row[k] > max_z_val {
+                max_k = k as i32;
+                max_z_val = z_row[k];
+            }
+        }
+        assignments[i] = max_k;
+    }
+
+    TrainResult {
+        z: z.clone(),
+        assignments,
+        vbl,
+    }
 }

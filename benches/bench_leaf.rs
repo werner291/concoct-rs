@@ -172,5 +172,57 @@ fn bench_perform_mstep(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_calc_dist, bench_calc_sample_var, bench_update_means, bench_mstep, bench_perform_mstep);
+fn bench_train(c: &mut Criterion) {
+    // Warm up both thread pools before measurement
+    rayon::ThreadPoolBuilder::new().build_global().ok();
+    // Dummy work to ensure Rayon pool is alive
+    use rayon::prelude::*;
+    let _: Vec<i32> = (0..100).into_par_iter().map(|x| x * 2).collect();
+    let mut group = c.benchmark_group("train");
+    for (n, k, d) in [(128, 8, 16), (512, 16, 32), (2048, 32, 64)] {
+        let data = make_matrix(n, d);
+        let beta0 = 0.001f64;
+        let nu0 = d as f64;
+        let (var, _) = vbgmm::calc_sample_var(&data, n, d);
+        let mut inv_w0 = vec![0.0f64; d * d];
+        for i in 0..d { inv_w0[i * d + i] = var[i] * (d as f64); }
+        let log_wishart_b = vbgmm::d_log_wishart_b(&inv_w0, d, nu0, true);
+        let vb_params = vbgmm::VBParams { beta0, nu0, inv_w0: inv_w0.clone() };
+        let seed = 1u64;
+
+        let label = format!("{n}x{k}x{d}");
+
+        group.bench_with_input(BenchmarkId::new("rust", &label), &(), |b, _| {
+            b.iter(|| {
+                let (mut z, mut ms) = vbgmm::init_kmeans(
+                    black_box(n), black_box(d), black_box(k),
+                    black_box(&data), black_box(seed), black_box(1000),
+                    black_box(&vb_params),
+                );
+                vbgmm::gmm_train_vb(
+                    black_box(n), black_box(d), black_box(k),
+                    black_box(&data), &mut z, &mut ms,
+                    black_box(&vb_params), black_box(log_wishart_b),
+                    black_box(1000), black_box(1.0e-4),
+                )
+            })
+        });
+
+        let data_ptrs: Vec<*const f64> = (0..n).map(|i| data[i * d..].as_ptr()).collect();
+        group.bench_with_input(BenchmarkId::new("c", &label), &(), |b, _| {
+            let mut assign = vec![0i32; n];
+            b.iter(|| unsafe {
+                c_ffi::ffi_trainFull(
+                    black_box(data_ptrs.as_ptr()),
+                    black_box(n as i32), black_box(k as i32), black_box(d as i32),
+                    black_box(seed), black_box(1000), black_box(1.0e-4),
+                    assign.as_mut_ptr(),
+                )
+            })
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench_calc_dist, bench_calc_sample_var, bench_update_means, bench_mstep, bench_perform_mstep, bench_train);
 criterion_main!(benches);

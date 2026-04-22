@@ -37,6 +37,14 @@ extern "C" {
         covarOut: *mut f64, sigmaOut: *mut f64,
     );
 
+    /// Full training: initKMeans + gmmTrainVB_MP.
+    pub fn ffi_trainFull(
+        aadX: *const *const f64,
+        nN: i32, nK: i32, nD: i32,
+        seed: u64, maxIter: i32, dEpsilon: f64,
+        anAssign_out: *mut i32,
+    );
+
     /// K-means init + M-step.
     /// c-concoct/ffi_wrappers.c
     #[allow(clippy::too_many_arguments)]

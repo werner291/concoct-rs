@@ -9,6 +9,7 @@
 #include <string.h>
 #include <gsl/gsl_matrix.h>
 #include <gsl/gsl_rng.h>
+#include <omp.h>
 #include "c_vbgmm_fit.h"
 
 /* Forward declaration — mstep is not in the header */
@@ -60,6 +61,68 @@ void initKMeans(gsl_rng *ptGSLRNG, t_Cluster *ptCluster, t_Data *ptData);
 void allocateCluster(t_Cluster *ptCluster, int nN, int nK, int nD, t_Data *ptData, long lSeed, int nMaxIter, double dEpsilon, char *szCOutFile);
 void destroyCluster(t_Cluster* ptCluster);
 void setVBParams(t_VBParams *ptVBParams, t_Data *ptData);
+
+void gmmTrainVB_MP(t_Cluster *ptCluster, t_Data *ptData);
+
+/* Run initKMeans + gmmTrainVB_MP and return final assignments */
+void ffi_trainFull(double **aadX, int nN, int nK, int nD,
+                   unsigned long seed, int maxIter, double dEpsilon,
+                   int *anAssign_out)
+{
+    t_Data data;
+    t_VBParams vbParams;
+    t_Cluster *ptCluster;
+    gsl_rng *ptGSLRNG;
+    const gsl_rng_type *ptGSLRNGType;
+    int i;
+
+    data.nN = nN;
+    data.nD = nD;
+    data.aadX = aadX;
+
+    vbParams.dBeta0 = 1.0e-3;
+    vbParams.dNu0 = (double)nD;
+    vbParams.ptInvW0 = gsl_matrix_alloc(nD, nD);
+
+    {
+        double adVar[nD], adMu[nD];
+        calcSampleVar(&data, adVar, adMu);
+        gsl_matrix_set_zero(vbParams.ptInvW0);
+        for (i = 0; i < nD; i++)
+            gsl_matrix_set(vbParams.ptInvW0, i, i, adVar[i] * (double)nD);
+    }
+    vbParams.dLogWishartB = dLogWishartB(vbParams.ptInvW0, nD, vbParams.dNu0, 1);
+
+    ptCluster = malloc(sizeof(t_Cluster));
+    allocateCluster(ptCluster, nN, nK, nD, &data, seed, maxIter, dEpsilon, NULL);
+    ptCluster->ptVBParams = &vbParams;
+    ptCluster->bAssign = 0;
+
+    /* Pin OMP threads to match what driverMP does:
+       nThreads = min(nThreads, nN/32 + 1) */
+    {
+        int nT = nN / 32 + 1;
+        int nThreads = omp_get_max_threads();
+        if (nT < nThreads) nThreads = nT;
+        omp_set_num_threads(nThreads);
+    }
+
+    gsl_rng_env_setup();
+    ptGSLRNGType = gsl_rng_default;
+    ptGSLRNG = gsl_rng_alloc(ptGSLRNGType);
+    gsl_rng_set(ptGSLRNG, seed);
+
+    initKMeans(ptGSLRNG, ptCluster, &data);
+    gmmTrainVB_MP(ptCluster, &data);
+
+    for (i = 0; i < nN; i++)
+        anAssign_out[i] = ptCluster->anMaxZ[i];
+
+    gsl_rng_free(ptGSLRNG);
+    destroyCluster(ptCluster);
+    free(ptCluster);
+    gsl_matrix_free(vbParams.ptInvW0);
+}
 
 /* Run initKMeans and return the resulting Z matrix and assignments */
 void ffi_initKMeans(double **aadX, int nN, int nK, int nD,
