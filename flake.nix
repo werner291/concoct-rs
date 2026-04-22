@@ -164,6 +164,7 @@
           pkgs.rustc
           pkgs.cargo
           pkgs.pkg-config
+          pkgs.gh
         ];
 
         shellHook = ''
