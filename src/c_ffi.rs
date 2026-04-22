@@ -25,6 +25,18 @@ extern "C" {
     /// Note: modifies ptW in-place (calls decomposeMatrix on it).
     pub fn dWishartExpectLogDet(ptW: *mut GslMatrix, dNu: f64, nD: i32) -> f64;
 
+    /// M-step for a single component.
+    /// c-concoct/ffi_wrappers.c (wraps c_vbgmm_fit.c:530-709)
+    #[allow(clippy::too_many_arguments)]
+    pub fn ffi_mstep(
+        k: i32, nN: i32, nD: i32, nK: i32,
+        aadZ: *const *const f64, aadX: *const *const f64,
+        dBeta0: f64, dNu0: f64, aadInvW0: *const *const f64,
+        adMu: *mut f64, adM: *mut f64,
+        pdPi: *mut f64, pdBeta: *mut f64, pdNu: *mut f64, pdLDet: *mut f64,
+        covarOut: *mut f64, sigmaOut: *mut f64,
+    );
+
     /// Recompute cluster centroids from assignments.
     /// c-concoct/ffi_wrappers.c (wraps c_vbgmm_fit.c:1259-1298)
     pub fn ffi_updateMeans(

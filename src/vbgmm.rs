@@ -1,3 +1,270 @@
+#[cfg(target_arch = "x86_64")]
+use std::arch::x86_64::*;
+
+// Constants matching c-concoct/c_vbgmm_fit.h
+pub const MIN_Z: f64 = 1.0e-6;
+pub const MIN_PI: f64 = 0.1;
+
+/// VB prior parameters (matches t_VBParams).
+pub struct VBParams {
+    pub beta0: f64,
+    pub nu0: f64,
+    /// Inverse Wishart scale matrix, flat row-major, n_dims x n_dims.
+    pub inv_w0: Vec<f64>,
+}
+
+/// Result of the M-step for a single component.
+pub struct MStepResult {
+    pub pi: f64,
+    pub beta: f64,
+    pub nu: f64,
+    pub l_det: f64,
+    /// Cluster mean, length n_dims.
+    pub mu: Vec<f64>,
+    /// Scaled mean (Bishop 10.61), length n_dims.
+    pub m: Vec<f64>,
+    /// Sample covariance matrix, flat row-major, n_dims x n_dims.
+    pub covar: Vec<f64>,
+    /// Inverse regularised variance (Bishop 10.62), flat row-major, n_dims x n_dims.
+    pub sigma: Vec<f64>,
+}
+
+/// M-step for a single component k (Bishop 10.58-10.65).
+///
+/// Computes the updated parameters for component k given the current
+/// responsibilities Z. Called once per component by performMStepMP.
+///
+/// `z` is flat row-major `[nN][nK]`: `z[i * n_clusters + k]`.
+/// `data` is flat row-major `[nN][nD]`: `data[i * n_dims + j]`.
+///
+/// c-concoct/c_vbgmm_fit.c:530-709
+pub fn mstep(
+    k: usize,
+    n_samples: usize,
+    n_dims: usize,
+    n_clusters: usize,
+    z: &[f64],
+    data: &[f64],
+    vb_params: &VBParams,
+) -> MStepResult {
+    use crate::c_ffi;
+
+    let nd = n_dims;
+    let nn = n_samples;
+
+    let mut mu = vec![0.0f64; nd];
+    let mut m = vec![0.0f64; nd];
+    let mut covar = vec![0.0f64; nd * nd];
+    let mut inv_wk = vec![0.0f64; nd * nd];
+
+    // Accumulate weighted mean and mixture weight
+    let mut d_pi = 0.0f64;
+    for i in 0..nn {
+        let z_row = &z[i * n_clusters..(i + 1) * n_clusters];
+        let z_ik = z_row[k];
+        if z_ik > MIN_Z {
+            d_pi += z_ik;
+            let data_row = &data[i * nd..(i + 1) * nd];
+            let mut j = 0;
+            unsafe {
+                let zv = _mm_set1_pd(z_ik);
+                while j + 2 <= nd {
+                    let d = _mm_loadu_pd(data_row.as_ptr().add(j));
+                    let m = _mm_loadu_pd(mu.as_ptr().add(j));
+                    let r = _mm_add_pd(m, _mm_mul_pd(zv, d));
+                    _mm_storeu_pd(mu.as_mut_ptr().add(j), r);
+                    j += 2;
+                }
+            }
+            while j < nd {
+                mu[j] += z_ik * data_row[j];
+                j += 1;
+            }
+        }
+    }
+
+    let d_beta;
+    let d_nu;
+    let d_l_det;
+
+    if d_pi > MIN_PI {
+        // Equation 10.60
+        d_beta = vb_params.beta0 + d_pi;
+
+        for j in 0..nd {
+            // Equation 10.61
+            m[j] = mu[j] / d_beta;
+            mu[j] /= d_pi;
+        }
+
+        d_nu = vb_params.nu0 + d_pi;
+
+        // Calculate covariance matrices
+        // diff is allocated once outside the loop (C uses a stack VLA)
+        let mut diff = vec![0.0f64; nd];
+        for i in 0..nn {
+            let z_ik = z[i * n_clusters + k];
+            if z_ik > MIN_Z {
+                let data_row = &data[i * nd..(i + 1) * nd];
+
+                // Compute diff = data_row - mu using packed SSE2 (2 at a time),
+                // matching GCC's subpd codegen.
+                {
+                    let mut j = 0;
+                    while j + 2 <= nd {
+                        unsafe {
+                            let d = _mm_loadu_pd(data_row.as_ptr().add(j));
+                            let m = _mm_loadu_pd(mu.as_ptr().add(j));
+                            let r = _mm_sub_pd(d, m);
+                            _mm_storeu_pd(diff.as_mut_ptr().add(j), r);
+                        }
+                        j += 2;
+                    }
+                    // Scalar tail
+                    while j < nd {
+                        diff[j] = data_row[j] - mu[j];
+                        j += 1;
+                    }
+                }
+
+                for l in 0..nd {
+                    let covar_row = &mut covar[l * nd..l * nd + nd];
+                    let z_diff_l = z_ik * diff[l];
+
+                    // Packed mul AND add — covar[l][m] and covar[l][m+1] are
+                    // independent accumulators, so packed addpd is safe.
+                    // Matches GCC's mulpd + addpd + movups codegen exactly.
+                    let mut m_idx = 0;
+                    unsafe {
+                        let z_dl = _mm_set1_pd(z_diff_l);
+                        while m_idx + 2 <= l + 1 {
+                            let d = _mm_loadu_pd(diff.as_ptr().add(m_idx));
+                            let c = _mm_loadu_pd(covar_row.as_ptr().add(m_idx));
+                            let r = _mm_add_pd(c, _mm_mul_pd(z_dl, d));
+                            _mm_storeu_pd(covar_row.as_mut_ptr().add(m_idx), r);
+                            m_idx += 2;
+                        }
+                    }
+                    while m_idx <= l {
+                        covar_row[m_idx] += z_diff_l * diff[m_idx];
+                        m_idx += 1;
+                    }
+                }
+            }
+        }
+
+        // Symmetrise
+        for l in 0..nd {
+            for m_idx in (l + 1)..nd {
+                covar[l * nd + m_idx] = covar[m_idx * nd + l];
+            }
+        }
+
+        // Save sample covariances (covar / dPi) into the covar output
+        let mut covar_out = vec![0.0f64; nd * nd];
+        for l in 0..nd {
+            let covar_row = &covar[l * nd..l * nd + nd];
+            let out_row = &mut covar_out[l * nd..l * nd + nd];
+            for m_idx in 0..nd {
+                out_row[m_idx] = covar_row[m_idx] / d_pi;
+            }
+        }
+
+        // Equation 10.62: InvWK = InvW0 + covar + (beta0*dPi/beta) * mu * mu^T
+        let d_f = (vb_params.beta0 * d_pi) / d_beta;
+        for l in 0..nd {
+            let inv_w0_row = &vb_params.inv_w0[l * nd..l * nd + nd];
+            let covar_row = &covar[l * nd..l * nd + nd];
+            let inv_wk_row = &mut inv_wk[l * nd..l * nd + nd];
+            for m_idx in 0..=l {
+                inv_wk_row[m_idx] = inv_w0_row[m_idx]
+                    + covar_row[m_idx]
+                    + d_f * mu[l] * mu[m_idx];
+            }
+        }
+
+        // Build sigma matrix (symmetric) and divide covar by dPi
+        let mut sigma = vec![0.0f64; nd * nd];
+        for l in 0..nd {
+            let covar_row = &mut covar[l * nd..l * nd + nd];
+            for m_idx in 0..=l {
+                covar_row[m_idx] /= d_pi;
+                sigma[l * nd + m_idx] = inv_wk[l * nd + m_idx];
+                sigma[m_idx * nd + l] = inv_wk[l * nd + m_idx];
+            }
+        }
+
+        // Equation 10.65
+        d_l_det = {
+            let mut det = (nd as f64) * (2.0f64).ln();
+            for l in 0..nd {
+                let dx = 0.5 * (d_nu - l as f64);
+                det += unsafe { c_ffi::gsl_sf_psi(dx) };
+            }
+            det -= decompose_matrix(&mut sigma, nd);
+            det
+        };
+
+        MStepResult {
+            pi: d_pi,
+            beta: d_beta,
+            nu: d_nu,
+            l_det: d_l_det,
+            mu,
+            m,
+            covar: covar_out,
+            sigma,
+        }
+    } else {
+        // Empty component: reset to prior
+        d_pi = 0.0;
+        d_beta = vb_params.beta0;
+
+        for j in 0..nd {
+            m[j] = 0.0;
+            mu[j] = 0.0;
+        }
+
+        d_nu = vb_params.nu0;
+
+        for l in 0..nd {
+            for m_idx in 0..=l {
+                inv_wk[l * nd + m_idx] = vb_params.inv_w0[l * nd + m_idx];
+            }
+        }
+
+        let mut sigma = vec![0.0f64; nd * nd];
+        for l in 0..nd {
+            for m_idx in 0..=l {
+                sigma[l * nd + m_idx] = inv_wk[l * nd + m_idx];
+                sigma[m_idx * nd + l] = inv_wk[l * nd + m_idx];
+            }
+        }
+
+        // Equation 10.65
+        d_l_det = {
+            let mut det = (nd as f64) * (2.0f64).ln();
+            for l in 0..nd {
+                let dx = 0.5 * (d_nu - l as f64);
+                det += unsafe { c_ffi::gsl_sf_psi(dx) };
+            }
+            det -= decompose_matrix(&mut sigma, nd);
+            det
+        };
+
+        MStepResult {
+            pi: d_pi,
+            beta: d_beta,
+            nu: d_nu,
+            l_det: d_l_det,
+            mu,
+            m,
+            covar: vec![0.0f64; nd * nd],
+            sigma,
+        }
+    }
+}
+
 /// Euclidean distance between two vectors of equal length.
 ///
 /// Used by k-means initialisation to assign data points to the nearest

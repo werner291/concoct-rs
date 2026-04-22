@@ -89,5 +89,60 @@ fn bench_update_means(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_calc_dist, bench_calc_sample_var, bench_update_means);
+fn bench_mstep(c: &mut Criterion) {
+    let mut group = c.benchmark_group("mstep");
+    for (n, k, d) in [(32, 4, 4), (128, 8, 16), (512, 16, 32)] {
+        let data = make_matrix(n, d);
+        // Uniform-ish responsibilities
+        let z: Vec<f64> = (0..n * k).map(|i| {
+            if i % k == 0 { 0.7 } else { 0.3 / (k as f64 - 1.0) }
+        }).collect();
+        // SPD prior
+        let mut inv_w0 = vec![0.0f64; d * d];
+        for i in 0..d { inv_w0[i * d + i] = 1.0; }
+
+        let vb_params = vbgmm::VBParams {
+            beta0: 0.001,
+            nu0: d as f64,
+            inv_w0: inv_w0.clone(),
+        };
+
+        let label = format!("{n}x{k}x{d}");
+
+        group.bench_with_input(BenchmarkId::new("rust", &label), &(), |b, _| {
+            b.iter(|| vbgmm::mstep(
+                black_box(0), black_box(n), black_box(d), black_box(k),
+                black_box(&z), black_box(&data), black_box(&vb_params),
+            ))
+        });
+        group.bench_with_input(BenchmarkId::new("c", &label), &(), |b, _| {
+            let data_ptrs: Vec<*const f64> = (0..n).map(|i| data[i * d..].as_ptr()).collect();
+            let z_ptrs: Vec<*const f64> = (0..n).map(|i| z[i * k..].as_ptr()).collect();
+            let inv_w0_ptrs: Vec<*const f64> = (0..d).map(|i| inv_w0[i * d..].as_ptr()).collect();
+
+            let mut c_mu = vec![0.0f64; d];
+            let mut c_m = vec![0.0f64; d];
+            let mut c_pi = 0.0f64;
+            let mut c_beta = 0.0f64;
+            let mut c_nu = 0.0f64;
+            let mut c_ldet = 0.0f64;
+            let mut c_covar = vec![0.0f64; d * d];
+            let mut c_sigma = vec![0.0f64; d * d];
+
+            b.iter(|| unsafe {
+                c_ffi::ffi_mstep(
+                    black_box(0), black_box(n as i32), black_box(d as i32), black_box(k as i32),
+                    black_box(z_ptrs.as_ptr()), black_box(data_ptrs.as_ptr()),
+                    black_box(0.001), black_box(d as f64), black_box(inv_w0_ptrs.as_ptr()),
+                    c_mu.as_mut_ptr(), c_m.as_mut_ptr(),
+                    &mut c_pi, &mut c_beta, &mut c_nu, &mut c_ldet,
+                    c_covar.as_mut_ptr(), c_sigma.as_mut_ptr(),
+                )
+            })
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench_calc_dist, bench_calc_sample_var, bench_update_means, bench_mstep);
 criterion_main!(benches);
