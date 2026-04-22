@@ -26,6 +26,77 @@ pub struct MStepResult {
     pub sigma: Vec<f64>,
 }
 
+/// Scalar covariance accumulation loop.
+fn covar_accum_scalar(
+    z: &[f64], data: &[f64], mu: &[f64],
+    nd: usize, nk: usize, k: usize, covar: &mut [f64],
+) {
+    let mut diff = vec![0.0f64; nd];
+    for (z_row, data_row) in z.chunks_exact(nk).zip(data.chunks_exact(nd)) {
+        let z_ik = z_row[k];
+        if z_ik > MIN_Z {
+            diff.iter_mut().zip(data_row.iter().zip(mu))
+                .for_each(|(d, (&x, &m))| *d = x - m);
+
+            for l in 0..nd {
+                let covar_row = &mut covar[l * nd..l * nd + nd];
+                let z_diff_l = z_ik * diff[l];
+                for m_idx in 0..=l {
+                    covar_row[m_idx] += z_diff_l * diff[m_idx];
+                }
+            }
+        }
+    }
+}
+
+/// AVX2 covariance accumulation: 4 doubles per iteration.
+/// Produces bit-identical results to scalar (each covar[l][m] is an
+/// independent accumulator, so packed add is safe).
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn covar_accum_avx2(
+    z: &[f64], data: &[f64], mu: &[f64],
+    nd: usize, nk: usize, k: usize, covar: &mut [f64],
+) {
+    use std::arch::x86_64::*;
+
+    let mut diff = vec![0.0f64; nd];
+    for (z_row, data_row) in z.chunks_exact(nk).zip(data.chunks_exact(nd)) {
+        let z_ik = z_row[k];
+        if z_ik > MIN_Z {
+            // diff = data_row - mu, 4 at a time
+            let mut j = 0;
+            while j + 4 <= nd {
+                let d = _mm256_loadu_pd(data_row.as_ptr().add(j));
+                let m = _mm256_loadu_pd(mu.as_ptr().add(j));
+                _mm256_storeu_pd(diff.as_mut_ptr().add(j), _mm256_sub_pd(d, m));
+                j += 4;
+            }
+            while j < nd { diff[j] = data_row[j] - mu[j]; j += 1; }
+
+            for l in 0..nd {
+                let covar_row = &mut covar[l * nd..l * nd + nd];
+                let z_diff_l = z_ik * diff[l];
+                let zd = _mm256_set1_pd(z_diff_l);
+                let mut m_idx = 0;
+                while m_idx + 4 <= l + 1 {
+                    let d = _mm256_loadu_pd(diff.as_ptr().add(m_idx));
+                    let c = _mm256_loadu_pd(covar_row.as_ptr().add(m_idx));
+                    _mm256_storeu_pd(
+                        covar_row.as_mut_ptr().add(m_idx),
+                        _mm256_add_pd(c, _mm256_mul_pd(zd, d)),
+                    );
+                    m_idx += 4;
+                }
+                while m_idx <= l {
+                    covar_row[m_idx] += z_diff_l * diff[m_idx];
+                    m_idx += 1;
+                }
+            }
+        }
+    }
+}
+
 /// M-step for a single component k (Bishop 10.58-10.65).
 ///
 /// Computes the updated parameters for component k given the current
@@ -76,21 +147,21 @@ pub fn mstep(
 
         // Covariance
         let mut covar = vec![0.0f64; nd * nd];
-        let mut diff = vec![0.0f64; nd];
-        for (z_row, data_row) in z.chunks_exact(n_clusters).zip(data.chunks_exact(nd)) {
-            let z_ik = z_row[k];
-            if z_ik > MIN_Z {
-                diff.iter_mut().zip(data_row.iter().zip(&mu))
-                    .for_each(|(d, (&x, &m))| *d = x - m);
-
-                for l in 0..nd {
-                    let covar_row = &mut covar[l * nd..l * nd + nd];
-                    let z_diff_l = z_ik * diff[l];
-                    for m_idx in 0..=l {
-                        covar_row[m_idx] += z_diff_l * diff[m_idx];
-                    }
+        #[cfg(target_arch = "x86_64")]
+        {
+            if is_x86_feature_detected!("avx2") {
+                // SAFETY: AVX2 detected at runtime. The AVX2 path produces
+                // bit-identical results to scalar (independent accumulators).
+                unsafe {
+                    covar_accum_avx2(&z, &data, &mu, nd, n_clusters, k, &mut covar);
                 }
+            } else {
+                covar_accum_scalar(&z, &data, &mu, nd, n_clusters, k, &mut covar);
             }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            covar_accum_scalar(&z, &data, &mu, nd, n_clusters, k, &mut covar);
         }
 
         // Symmetrise
