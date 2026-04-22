@@ -566,3 +566,209 @@ pub fn calc_z(
         }
     }
 }
+
+/// Bishop Equation 10.71 term for one component.
+/// c-concoct/c_vbgmm_fit.c:824-857
+fn eqn_a(
+    nd: usize, covar_k: &[f64], sigma_k: &[f64],
+    mu_k: &[f64], m_k: &[f64],
+    l_det_k: f64, nu_k: f64, log_d2pi: f64, beta_k: f64, n_k: f64,
+) -> f64 {
+    use crate::c_ffi;
+    let dd = nd as f64;
+
+    unsafe {
+        let gsl_covar = c_ffi::gsl_matrix_from_flat(covar_k, nd);
+        let gsl_sigma = c_ffi::gsl_matrix_from_flat(sigma_k, nd);
+        let gsl_res = c_ffi::gsl_matrix_alloc(nd, nd);
+
+        // res = covar * sigma
+        const CBLAS_NO_TRANS: i32 = 111;
+        c_ffi::gsl_blas_dgemm(CBLAS_NO_TRANS, CBLAS_NO_TRANS, 1.0,
+                              gsl_covar, gsl_sigma, 0.0, gsl_res);
+
+        // trace(res)
+        let mut dt1 = 0.0f64;
+        for l in 0..nd {
+            dt1 += c_ffi::gsl_matrix_get(gsl_res, l, l);
+        }
+
+        // diff = mu_k - m_k, then dt2 = diff^T * sigma * diff
+        let pt_diff = c_ffi::gsl_vector_alloc(nd);
+        let pt_r = c_ffi::gsl_vector_alloc(nd);
+        for l in 0..nd {
+            c_ffi::gsl_vector_set(pt_diff, l, mu_k[l] - m_k[l]);
+        }
+        const CBLAS_LOWER: i32 = 122;
+        c_ffi::gsl_blas_dsymv(CBLAS_LOWER, 1.0, gsl_sigma, pt_diff, 0.0, pt_r);
+        let mut dt2 = 0.0f64;
+        c_ffi::gsl_blas_ddot(pt_diff, pt_r, &mut dt2);
+
+        let d_f = l_det_k - nu_k * (dt1 + dt2) - dd * (log_d2pi + (1.0 / beta_k));
+        let ret = 0.5 * n_k * d_f;
+
+        c_ffi::gsl_matrix_free(gsl_res);
+        c_ffi::gsl_matrix_free(gsl_covar);
+        c_ffi::gsl_matrix_free(gsl_sigma);
+        c_ffi::gsl_vector_free(pt_diff);
+        c_ffi::gsl_vector_free(pt_r);
+
+        ret
+    }
+}
+
+/// Bishop Equation 10.74 term for one component.
+/// c-concoct/c_vbgmm_fit.c:859-892
+fn eqn_b(
+    nd: usize, inv_w0: &[f64], sigma_k: &[f64],
+    m_k: &[f64], beta0: f64, d2pi: f64,
+    l_det_k: f64, beta_k: f64, nu_k: f64, nu0: f64,
+) -> f64 {
+    use crate::c_ffi;
+    let dd = nd as f64;
+
+    unsafe {
+        let gsl_invw0 = c_ffi::gsl_matrix_from_flat(inv_w0, nd);
+        let gsl_sigma = c_ffi::gsl_matrix_from_flat(sigma_k, nd);
+        let gsl_res = c_ffi::gsl_matrix_alloc(nd, nd);
+
+        const CBLAS_NO_TRANS: i32 = 111;
+        c_ffi::gsl_blas_dgemm(CBLAS_NO_TRANS, CBLAS_NO_TRANS, 1.0,
+                              gsl_invw0, gsl_sigma, 0.0, gsl_res);
+
+        let mut dt1 = 0.0f64;
+        for l in 0..nd {
+            dt1 += c_ffi::gsl_matrix_get(gsl_res, l, l);
+        }
+
+        let pt_diff = c_ffi::gsl_vector_alloc(nd);
+        let pt_r = c_ffi::gsl_vector_alloc(nd);
+        for l in 0..nd {
+            c_ffi::gsl_vector_set(pt_diff, l, m_k[l]);
+        }
+        const CBLAS_LOWER: i32 = 122;
+        c_ffi::gsl_blas_dsymv(CBLAS_LOWER, 1.0, gsl_sigma, pt_diff, 0.0, pt_r);
+        let mut dt2 = 0.0f64;
+        c_ffi::gsl_blas_ddot(pt_diff, pt_r, &mut dt2);
+
+        let d_f = dd * (beta0 / d2pi).ln() + l_det_k
+            - ((dd * beta0) / beta_k)
+            - beta0 * nu_k * dt2
+            - nu_k * dt1;
+        let ret = 0.5 * (d_f + (nu0 - dd - 1.0) * l_det_k);
+
+        c_ffi::gsl_matrix_free(gsl_res);
+        c_ffi::gsl_matrix_free(gsl_invw0);
+        c_ffi::gsl_matrix_free(gsl_sigma);
+        c_ffi::gsl_vector_free(pt_diff);
+        c_ffi::gsl_vector_free(pt_r);
+
+        ret
+    }
+}
+
+/// Variational lower bound (Bishop 10.71-10.77).
+///
+/// All flat arrays row-major.
+/// `z`: `[n_samples][n_clusters]`.
+/// `mu`, `m`: `[n_clusters][n_dims]`.
+/// `covar`, `sigma`: `[n_clusters][n_dims * n_dims]`.
+/// `pi`, `beta`, `nu`, `l_det`: per-cluster, length `n_clusters`.
+/// `inv_w0`: prior inverse Wishart scale, `[n_dims * n_dims]`.
+/// `log_wishart_b`: precomputed log Wishart B from setVBParams.
+///
+/// c-concoct/c_vbgmm_fit.c:895-977
+pub fn calc_vbl(
+    n_samples: usize,
+    n_dims: usize,
+    n_clusters: usize,
+    z: &[f64],
+    mu: &[f64],
+    m: &[f64],
+    covar: &[f64],
+    sigma: &mut [f64],
+    pi: &[f64],
+    beta: &[f64],
+    nu: &[f64],
+    l_det: &[f64],
+    inv_w0: &[f64],
+    beta0: f64,
+    nu0: f64,
+    log_wishart_b: f64,
+) -> f64 {
+    let nn = n_samples;
+    let nk = n_clusters;
+    let nd = n_dims;
+    let dd = nd as f64;
+    let d2pi = 2.0 * std::f64::consts::PI;
+    let log_d2pi = d2pi.ln();
+
+    // Compute N_k and Bishop2 (Eq 10.72)
+    let mut n_k = vec![0.0f64; nk];
+    let mut bishop2 = 0.0f64;
+    for i in 0..nn {
+        let z_row = &z[i * nk..(i + 1) * nk];
+        for k in 0..nk {
+            n_k[k] += z_row[k];
+            if pi[k] > 0.0 {
+                bishop2 += z_row[k] * pi[k].ln();
+            }
+        }
+    }
+
+    let mut d_k = 0.0f64;
+    for k in 0..nk {
+        if n_k[k] > 0.0 { d_k += 1.0; }
+    }
+
+    // Bishop1 (Eq 10.71)
+    let mut bishop1 = 0.0f64;
+    for k in 0..nk {
+        if n_k[k] > 0.0 {
+            bishop1 += eqn_a(nd,
+                &covar[k * nd * nd..(k + 1) * nd * nd],
+                &sigma[k * nd * nd..(k + 1) * nd * nd],
+                &mu[k * nd..(k + 1) * nd],
+                &m[k * nd..(k + 1) * nd],
+                l_det[k], nu[k], log_d2pi, beta[k], n_k[k]);
+        }
+    }
+
+    // Bishop3 (Eq 10.74)
+    let mut bishop3 = 0.0f64;
+    for k in 0..nk {
+        if n_k[k] > 0.0 {
+            bishop3 += eqn_b(nd, inv_w0,
+                &sigma[k * nd * nd..(k + 1) * nd * nd],
+                &m[k * nd..(k + 1) * nd],
+                beta0, d2pi, l_det[k], beta[k], nu[k], nu0);
+        }
+    }
+    bishop3 += d_k * log_wishart_b;
+
+    // Bishop4 (Eq 10.75)
+    let mut bishop4 = 0.0f64;
+    for i in 0..nn {
+        let z_row = &z[i * nk..(i + 1) * nk];
+        for k in 0..nk {
+            if z_row[k] > 0.0 {
+                bishop4 += z_row[k] * z_row[k].ln();
+            }
+        }
+    }
+
+    // Bishop5 (Eq 10.77)
+    let mut bishop5 = 0.0f64;
+    for k in 0..nk {
+        if n_k[k] > 0.0 {
+            let mut sigma_k = sigma[k * nd * nd..(k + 1) * nd * nd].to_vec();
+            bishop5 += 0.5 * l_det[k]
+                + 0.5 * dd * (beta[k] / d2pi).ln()
+                - 0.5 * dd
+                - d_wishart_expect_log_det(&mut sigma_k, nd, nu[k]);
+            sigma[k * nd * nd..(k + 1) * nd * nd].copy_from_slice(&sigma_k);
+        }
+    }
+
+    bishop1 + bishop2 + bishop3 - bishop4 - bishop5
+}

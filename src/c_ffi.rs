@@ -37,6 +37,21 @@ extern "C" {
         covarOut: *mut f64, sigmaOut: *mut f64,
     );
 
+    /// Variational lower bound.
+    /// c-concoct/ffi_wrappers.c (wraps c_vbgmm_fit.c:895-977)
+    #[allow(clippy::too_many_arguments)]
+    pub fn ffi_calcVBL(
+        aadX: *const *const f64,
+        nN: i32, nK: i32, nD: i32,
+        aadZ: *const *const f64,
+        aadMu: *const *const f64,
+        aadM: *const *const f64,
+        aptCovar: *const *mut GslMatrix,
+        aptSigma: *const *mut GslMatrix,
+        adPi: *const f64, adBeta: *const f64, adNu: *const f64, adLDet: *const f64,
+        dBeta0: f64, dNu0: f64, ptInvW0: *mut GslMatrix, dLogWishartB: f64,
+    ) -> f64;
+
     /// E-step: compute responsibilities.
     /// c-concoct/ffi_wrappers.c (wraps c_vbgmm_fit.c:979-1046)
     #[allow(clippy::too_many_arguments)]
@@ -91,6 +106,10 @@ extern "C" {
     ) -> i32;
     pub fn gsl_blas_ddot(
         x: *const GslVector, y: *const GslVector, result: *mut f64,
+    ) -> i32;
+    pub fn gsl_blas_dgemm(
+        transA: i32, transB: i32, alpha: f64, a: *const GslMatrix,
+        b: *const GslMatrix, beta: f64, c: *mut GslMatrix,
     ) -> i32;
 }
 

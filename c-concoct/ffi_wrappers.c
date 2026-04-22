@@ -56,6 +56,45 @@ void ffi_mstep(int k, int nN, int nD, int nK,
 }
 
 void calcZ_MP(t_Cluster* ptCluster, t_Data *ptData);
+double calcVBL_MP(t_Cluster* ptCluster);
+
+double ffi_calcVBL(double **aadX, int nN, int nK, int nD,
+                   double **aadZ, double **aadMu, double **aadM,
+                   gsl_matrix **aptCovar, gsl_matrix **aptSigma,
+                   double *adPi, double *adBeta, double *adNu, double *adLDet,
+                   double dBeta0, double dNu0, gsl_matrix *ptInvW0, double dLogWishartB)
+{
+    t_Data data;
+    t_Cluster cluster;
+    t_VBParams vbParams;
+
+    data.nN = nN;
+    data.nD = nD;
+    data.aadX = aadX;
+
+    vbParams.dBeta0 = dBeta0;
+    vbParams.dNu0 = dNu0;
+    vbParams.ptInvW0 = ptInvW0;
+    vbParams.dLogWishartB = dLogWishartB;
+
+    memset(&cluster, 0, sizeof(cluster));
+    cluster.nN = nN;
+    cluster.nK = nK;
+    cluster.nD = nD;
+    cluster.ptData = &data;
+    cluster.ptVBParams = &vbParams;
+    cluster.aadZ = aadZ;
+    cluster.aadMu = aadMu;
+    cluster.aadM = aadM;
+    cluster.aptCovar = aptCovar;
+    cluster.aptSigma = aptSigma;
+    cluster.adPi = adPi;
+    cluster.adBeta = adBeta;
+    cluster.adNu = adNu;
+    cluster.adLDet = adLDet;
+
+    return calcVBL_MP(&cluster);
+}
 
 void ffi_calcZ(double **aadX, int nN, int nK, int nD,
                double **aadZ, double **aadM,
