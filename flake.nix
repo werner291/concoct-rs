@@ -104,13 +104,14 @@
         inherit cargoArtifacts;
         pnameSuffix = "-bench";
         buildPhaseCargoCommand = "cargo bench --bench bench_leaf";
-        installPhaseCommand = "touch $out";
+        installPhaseCommand = "mkdir -p $out";
       });
     in
     {
       packages.${system} = {
         default = concoct;
         docker = dockerImage;
+        bench = concoctRustBench;
         codegen-calcdist = pkgs.callPackage ./nix/codegen-calcdist.nix {
           inherit (pkgs) gcc gsl;
           inherit craneLib rustSrc commonArgs cargoArtifacts;
@@ -119,7 +120,6 @@
 
       checks.${system} = {
         rust-ffi = concoctRustTests;
-        rust-bench = concoctRustBench;
 
         pytest-unit-input = mkPytestCheck "unit-input"
           "tests/test_unittest_input.py" {};
