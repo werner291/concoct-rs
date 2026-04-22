@@ -56,6 +56,74 @@ void ffi_mstep(int k, int nN, int nD, int nK,
 }
 
 void calcZ_MP(t_Cluster* ptCluster, t_Data *ptData);
+void initKMeans(gsl_rng *ptGSLRNG, t_Cluster *ptCluster, t_Data *ptData);
+void allocateCluster(t_Cluster *ptCluster, int nN, int nK, int nD, t_Data *ptData, long lSeed, int nMaxIter, double dEpsilon, char *szCOutFile);
+void destroyCluster(t_Cluster* ptCluster);
+void setVBParams(t_VBParams *ptVBParams, t_Data *ptData);
+
+/* Run initKMeans and return the resulting Z matrix and assignments */
+void ffi_initKMeans(double **aadX, int nN, int nK, int nD,
+                    unsigned long seed, int maxIter,
+                    double dBeta0, double dNu0,
+                    double **aadZ_out, int *anMaxZ_out,
+                    double *adPi_out)
+{
+    t_Data data;
+    t_VBParams vbParams;
+    t_Cluster *ptCluster;
+    gsl_rng *ptGSLRNG;
+    const gsl_rng_type *ptGSLRNGType;
+    int i, k;
+
+    data.nN = nN;
+    data.nD = nD;
+    data.aadX = aadX;
+
+    /* Set up VB params the same way the driver does */
+    vbParams.dBeta0 = dBeta0;
+    vbParams.dNu0 = dNu0;
+    vbParams.ptInvW0 = gsl_matrix_alloc(nD, nD);
+
+    {
+        double adVar[nD], adMu[nD];
+        calcSampleVar(&data, adVar, adMu);
+        gsl_matrix_set_zero(vbParams.ptInvW0);
+        for (i = 0; i < nD; i++) {
+            gsl_matrix_set(vbParams.ptInvW0, i, i, adVar[i] * (double)nD);
+        }
+    }
+    vbParams.dLogWishartB = dLogWishartB(vbParams.ptInvW0, nD, dNu0, 1);
+
+    /* Allocate cluster */
+    ptCluster = malloc(sizeof(t_Cluster));
+    allocateCluster(ptCluster, nN, nK, nD, &data, seed, maxIter, 1.0e-4, NULL);
+    ptCluster->ptVBParams = &vbParams;
+    ptCluster->bAssign = 0;
+
+    /* RNG */
+    gsl_rng_env_setup();
+    ptGSLRNGType = gsl_rng_default;
+    ptGSLRNG = gsl_rng_alloc(ptGSLRNGType);
+    gsl_rng_set(ptGSLRNG, seed);
+
+    initKMeans(ptGSLRNG, ptCluster, &data);
+
+    /* Copy results out */
+    for (i = 0; i < nN; i++) {
+        anMaxZ_out[i] = ptCluster->anMaxZ[i];
+        for (k = 0; k < nK; k++) {
+            aadZ_out[i][k] = ptCluster->aadZ[i][k];
+        }
+    }
+    for (k = 0; k < nK; k++) {
+        adPi_out[k] = ptCluster->adPi[k];
+    }
+
+    gsl_rng_free(ptGSLRNG);
+    destroyCluster(ptCluster);
+    free(ptCluster);
+    gsl_matrix_free(vbParams.ptInvW0);
+}
 double calcVBL_MP(t_Cluster* ptCluster);
 
 double ffi_calcVBL(double **aadX, int nN, int nK, int nD,

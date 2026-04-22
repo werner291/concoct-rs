@@ -833,3 +833,110 @@ pub fn perform_mstep(
         pi: pi_v, beta: beta_v, nu: nu_v, l_det: l_det_v,
     }
 }
+
+const NOT_SET: i32 = -1;
+
+/// K-means initialisation for the VBGMM.
+///
+/// Random initial assignment, then iterative k-means until convergence
+/// or max_iter. Converts final hard assignments to soft Z and runs
+/// performMStepMP. Uses the GSL RNG for reproducibility.
+///
+/// Returns (z, mstep_result) where z is the soft responsibility matrix.
+///
+/// c-concoct/c_vbgmm_fit.c:753-822
+pub fn init_kmeans(
+    n_samples: usize,
+    n_dims: usize,
+    n_clusters: usize,
+    data: &[f64],
+    seed: u64,
+    max_iter: usize,
+    vb_params: &VBParams,
+) -> (Vec<f64>, PerformMStepResult) {
+    use crate::c_ffi;
+
+    let nn = n_samples;
+    let nk = n_clusters;
+    let nd = n_dims;
+
+    let rng = unsafe { c_ffi::gsl_rng_new(seed) };
+
+    // Random initial assignment
+    let mut max_z = vec![0i32; nn];
+    let mut weights = vec![0i32; nk];
+    for i in 0..nn {
+        let nik = unsafe { c_ffi::gsl_rng_uniform_int(rng, nk as u64) } as i32;
+        max_z[i] = nik;
+        weights[nik as usize] += 1;
+    }
+
+    // Initial means
+    let mut mu_flat = vec![0.0f64; nk * nd];
+    update_means(data, nn, nk, nd, &max_z, &weights, &mut mu_flat);
+
+    // K-means iterations
+    let mut n_change = nn;
+    let mut n_iter = 0;
+
+    while n_change > 0 && n_iter < max_iter {
+        n_change = 0;
+
+        for i in 0..nn {
+            let data_row = &data[i * nd..(i + 1) * nd];
+            let mut d_min_dist = f64::MAX;
+            let mut n_min_k = NOT_SET;
+
+            for k in 0..nk {
+                let mu_row = &mu_flat[k * nd..(k + 1) * nd];
+                let d_dist = calc_dist(data_row, mu_row);
+                if d_dist < d_min_dist {
+                    n_min_k = k as i32;
+                    d_min_dist = d_dist;
+                }
+            }
+
+            if n_min_k != max_z[i] {
+                let n_curr = max_z[i];
+                n_change += 1;
+                weights[n_curr as usize] -= 1;
+                weights[n_min_k as usize] += 1;
+                max_z[i] = n_min_k;
+
+                // Handle empty clusters
+                if weights[n_curr as usize] == 0 {
+                    let mut n_rand_i = unsafe {
+                        c_ffi::gsl_rng_uniform_int(rng, nn as u64)
+                    } as usize;
+
+                    while weights[max_z[n_rand_i] as usize] == 1 {
+                        n_rand_i = unsafe {
+                            c_ffi::gsl_rng_uniform_int(rng, nn as u64)
+                        } as usize;
+                    }
+
+                    let n_ki = max_z[n_rand_i];
+                    weights[n_ki as usize] -= 1;
+                    weights[n_curr as usize] = 1;
+                    max_z[n_rand_i] = n_curr;
+                }
+            }
+        }
+
+        n_iter += 1;
+        update_means(data, nn, nk, nd, &max_z, &weights, &mut mu_flat);
+    }
+
+    unsafe { c_ffi::gsl_rng_free(rng); }
+
+    // Convert hard assignments to soft Z (1-hot)
+    let mut z = vec![0.0f64; nn * nk];
+    for i in 0..nn {
+        z[i * nk + max_z[i] as usize] = 1.0;
+    }
+
+    // Run M-step
+    let mstep_result = perform_mstep(nn, nd, nk, &z, data, vb_params);
+
+    (z, mstep_result)
+}

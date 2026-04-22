@@ -37,6 +37,19 @@ extern "C" {
         covarOut: *mut f64, sigmaOut: *mut f64,
     );
 
+    /// K-means init + M-step.
+    /// c-concoct/ffi_wrappers.c
+    #[allow(clippy::too_many_arguments)]
+    pub fn ffi_initKMeans(
+        aadX: *const *const f64,
+        nN: i32, nK: i32, nD: i32,
+        seed: u64, maxIter: i32,
+        dBeta0: f64, dNu0: f64,
+        aadZ_out: *const *mut f64,
+        anMaxZ_out: *mut i32,
+        adPi_out: *mut f64,
+    );
+
     /// Variational lower bound.
     /// c-concoct/ffi_wrappers.c (wraps c_vbgmm_fit.c:895-977)
     #[allow(clippy::too_many_arguments)]
@@ -107,10 +120,33 @@ extern "C" {
     pub fn gsl_blas_ddot(
         x: *const GslVector, y: *const GslVector, result: *mut f64,
     ) -> i32;
+    pub fn gsl_rng_alloc(rng_type: *const GslRngType) -> *mut GslRng;
+    pub fn gsl_rng_free(r: *mut GslRng);
+    pub fn gsl_rng_set(r: *mut GslRng, seed: u64);
+    pub fn gsl_rng_uniform_int(r: *mut GslRng, n: u64) -> u64;
+    pub fn gsl_rng_env_setup() -> *const GslRngType;
+
     pub fn gsl_blas_dgemm(
         transA: i32, transB: i32, alpha: f64, a: *const GslMatrix,
         b: *const GslMatrix, beta: f64, c: *mut GslMatrix,
     ) -> i32;
+}
+
+/// Opaque GSL RNG type.
+pub enum GslRng {}
+/// Opaque GSL RNG type descriptor.
+pub enum GslRngType {}
+
+/// Get the default GSL RNG type and allocate with a seed.
+pub unsafe fn gsl_rng_new(seed: u64) -> *mut GslRng {
+    let rng_type = gsl_rng_env_setup();
+    // gsl_rng_env_setup returns gsl_rng_default (mt19937)
+    extern "C" {
+        static gsl_rng_default: *const GslRngType;
+    }
+    let rng = gsl_rng_alloc(gsl_rng_default);
+    gsl_rng_set(rng, seed);
+    rng
 }
 
 /// Opaque GSL vector type.
