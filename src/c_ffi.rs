@@ -12,6 +12,10 @@ extern "C" {
     /// c-concoct/c_vbgmm_fit.c:202-227
     pub fn calcSampleVar(ptData: *const CData, adVar: *mut f64, adMu: *mut f64);
 
+    /// Cholesky decomposition, log-determinant, and inversion (in-place).
+    /// c-concoct/c_vbgmm_fit.c:507-528
+    pub fn decomposeMatrix(ptSigmaMatrix: *mut GslMatrix, nD: i32) -> f64;
+
     /// Recompute cluster centroids from assignments.
     /// c-concoct/ffi_wrappers.c (wraps c_vbgmm_fit.c:1259-1298)
     pub fn ffi_updateMeans(
@@ -21,6 +25,51 @@ extern "C" {
         aadMu: *const *mut f64,
     );
 }
+
+// --- GSL matrix FFI ---
+
+/// Opaque GSL matrix type. We only interact with it through GSL functions.
+#[repr(C)]
+pub struct GslMatrix {
+    pub size1: usize,
+    pub size2: usize,
+    pub tda: usize,
+    pub data: *mut f64,
+    pub block: *mut u8, // gsl_block, opaque
+    pub owner: i32,
+}
+
+extern "C" {
+    pub fn gsl_matrix_alloc(n1: usize, n2: usize) -> *mut GslMatrix;
+    pub fn gsl_matrix_free(m: *mut GslMatrix);
+    pub fn gsl_matrix_set(m: *mut GslMatrix, i: usize, j: usize, x: f64);
+    pub fn gsl_matrix_get(m: *const GslMatrix, i: usize, j: usize) -> f64;
+    pub fn gsl_matrix_memcpy(dest: *mut GslMatrix, src: *const GslMatrix) -> i32;
+}
+
+/// Helper to create a GSL matrix from a flat row-major slice.
+pub unsafe fn gsl_matrix_from_flat(data: &[f64], n: usize) -> *mut GslMatrix {
+    let m = gsl_matrix_alloc(n, n);
+    for i in 0..n {
+        for j in 0..n {
+            gsl_matrix_set(m, i, j, data[i * n + j]);
+        }
+    }
+    m
+}
+
+/// Helper to read a GSL matrix back into a flat row-major slice.
+pub unsafe fn gsl_matrix_to_flat(m: *const GslMatrix, n: usize) -> Vec<f64> {
+    let mut out = vec![0.0f64; n * n];
+    for i in 0..n {
+        for j in 0..n {
+            out[i * n + j] = gsl_matrix_get(m, i, j);
+        }
+    }
+    out
+}
+
+// --- CONCOCT data types ---
 
 /// Mirror of t_Data from c_vbgmm_fit.h, used to call C functions via FFI.
 #[repr(C)]

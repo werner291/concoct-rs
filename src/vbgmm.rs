@@ -49,6 +49,56 @@ pub fn calc_sample_var(data: &[f64], n_samples: usize, n_dims: usize) -> (Vec<f6
     (var, mu)
 }
 
+/// Cholesky decomposition, log-determinant, and in-place inversion.
+///
+/// Given a symmetric positive-definite matrix, computes the Cholesky
+/// decomposition, extracts the log-determinant from the diagonal
+/// (sum of 2*log(L[l,l])), then inverts the matrix in-place.
+///
+/// `matrix` is row-major, n x n. Modified in-place to hold the inverse.
+/// Returns the log-determinant. Panics if Cholesky decomposition fails.
+///
+/// c-concoct/c_vbgmm_fit.c:507-528
+pub fn decompose_matrix(matrix: &mut [f64], n: usize) -> f64 {
+    use crate::c_ffi;
+
+    unsafe {
+        let gsl_m = c_ffi::gsl_matrix_from_flat(matrix, n);
+
+        // GSL Cholesky decomposition (in-place)
+        extern "C" {
+            fn gsl_linalg_cholesky_decomp(m: *mut c_ffi::GslMatrix) -> i32;
+            fn gsl_linalg_cholesky_invert(m: *mut c_ffi::GslMatrix) -> i32;
+        }
+
+        let status = gsl_linalg_cholesky_decomp(gsl_m);
+        assert!(status != 27, "Failed Cholesky decomposition in decompose_matrix");
+        // GSL_EDOM = 1, but the C code checks for it; 27 is GSL_EDOM in some versions
+        // Actually let's just check != 0 for safety
+        if status != 0 {
+            panic!("Cholesky decomposition failed with status {status}");
+        }
+
+        // Log-determinant: sum of 2*log(diagonal)
+        let mut det = 0.0f64;
+        for l in 0..n {
+            let dt = c_ffi::gsl_matrix_get(gsl_m, l, l);
+            det += 2.0 * dt.ln();
+        }
+
+        // Invert in-place
+        gsl_linalg_cholesky_invert(gsl_m);
+
+        // Copy result back
+        let result = c_ffi::gsl_matrix_to_flat(gsl_m, n);
+        matrix.copy_from_slice(&result);
+
+        c_ffi::gsl_matrix_free(gsl_m);
+
+        det
+    }
+}
+
 /// Recompute cluster centroids from hard assignments.
 ///
 /// For each cluster k, the mean is the average of all data points assigned
