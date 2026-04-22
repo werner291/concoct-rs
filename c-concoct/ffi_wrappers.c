@@ -55,6 +55,35 @@ void ffi_mstep(int k, int nN, int nD, int nK,
     gsl_matrix_free(ptSigmaMatrix);
 }
 
+void calcZ_MP(t_Cluster* ptCluster, t_Data *ptData);
+
+void ffi_calcZ(double **aadX, int nN, int nK, int nD,
+               double **aadZ, double **aadM,
+               gsl_matrix **aptSigma,
+               double *adPi, double *adNu, double *adLDet, double *adBeta)
+{
+    t_Data data;
+    t_Cluster cluster;
+
+    data.nN = nN;
+    data.nD = nD;
+    data.aadX = aadX;
+
+    memset(&cluster, 0, sizeof(cluster));
+    cluster.nN = nN;
+    cluster.nK = nK;
+    cluster.nD = nD;
+    cluster.aadZ = aadZ;
+    cluster.aadM = aadM;
+    cluster.aptSigma = aptSigma;
+    cluster.adPi = adPi;
+    cluster.adNu = adNu;
+    cluster.adLDet = adLDet;
+    cluster.adBeta = adBeta;
+
+    calcZ_MP(&cluster, &data);
+}
+
 void ffi_updateMeans(double **aadX, int nN, int nK, int nD,
                      int *anMaxZ, int *anW, double **aadMu)
 {

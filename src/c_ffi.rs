@@ -37,6 +37,18 @@ extern "C" {
         covarOut: *mut f64, sigmaOut: *mut f64,
     );
 
+    /// E-step: compute responsibilities.
+    /// c-concoct/ffi_wrappers.c (wraps c_vbgmm_fit.c:979-1046)
+    #[allow(clippy::too_many_arguments)]
+    pub fn ffi_calcZ(
+        aadX: *const *const f64,
+        nN: i32, nK: i32, nD: i32,
+        aadZ: *const *mut f64,
+        aadM: *const *const f64,
+        aptSigma: *const *mut GslMatrix,
+        adPi: *const f64, adNu: *const f64, adLDet: *const f64, adBeta: *const f64,
+    );
+
     /// Recompute cluster centroids from assignments.
     /// c-concoct/ffi_wrappers.c (wraps c_vbgmm_fit.c:1259-1298)
     pub fn ffi_updateMeans(
@@ -68,6 +80,28 @@ extern "C" {
     pub fn gsl_matrix_memcpy(dest: *mut GslMatrix, src: *const GslMatrix) -> i32;
     pub fn gsl_sf_lngamma(x: f64) -> f64;
     pub fn gsl_sf_psi(x: f64) -> f64;
+
+    pub fn gsl_vector_alloc(n: usize) -> *mut GslVector;
+    pub fn gsl_vector_free(v: *mut GslVector);
+    pub fn gsl_vector_set(v: *mut GslVector, i: usize, x: f64);
+    pub fn gsl_vector_get(v: *const GslVector, i: usize) -> f64;
+    pub fn gsl_blas_dsymv(
+        uplo: i32, alpha: f64, a: *const GslMatrix, x: *const GslVector,
+        beta: f64, y: *mut GslVector,
+    ) -> i32;
+    pub fn gsl_blas_ddot(
+        x: *const GslVector, y: *const GslVector, result: *mut f64,
+    ) -> i32;
+}
+
+/// Opaque GSL vector type.
+#[repr(C)]
+pub struct GslVector {
+    pub size: usize,
+    pub stride: usize,
+    pub data: *mut f64,
+    pub block: *mut u8,
+    pub owner: i32,
 }
 
 /// Helper to create a GSL matrix from a flat row-major slice.

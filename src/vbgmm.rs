@@ -454,3 +454,115 @@ pub fn update_means(
         }
     }
 }
+
+/// E-step: compute responsibilities Z for all data points.
+///
+/// For each sample i and cluster k, computes the (unnormalized) probability
+/// that sample i belongs to cluster k, then normalizes. Uses the Mahalanobis
+/// distance via GSL dsymv/ddot.
+///
+/// All flat arrays are row-major.
+/// `z`: output, `[n_samples][n_clusters]`.
+/// `data`: `[n_samples][n_dims]`.
+/// `m`: scaled means, `[n_clusters][n_dims]`.
+/// `sigma`: inverse regularised variances, `[n_clusters][n_dims * n_dims]`.
+/// `pi`, `nu`, `l_det`, `beta`: per-cluster parameters, length `n_clusters`.
+///
+/// c-concoct/c_vbgmm_fit.c:979-1046
+pub fn calc_z(
+    n_samples: usize,
+    n_dims: usize,
+    n_clusters: usize,
+    data: &[f64],
+    z: &mut [f64],
+    m: &[f64],
+    sigma: &[f64],
+    pi: &[f64],
+    nu: &[f64],
+    l_det: &[f64],
+    beta: &[f64],
+) {
+    use crate::c_ffi;
+
+    let dd = n_dims as f64;
+    let nk = n_clusters;
+    let nd = n_dims;
+
+    // CblasLower = 122 in GSL
+    const CBLAS_LOWER: i32 = 122;
+
+    for i in 0..n_samples {
+        let data_row = &data[i * nd..(i + 1) * nd];
+        let z_row = &mut z[i * nk..(i + 1) * nk];
+
+        let mut dist = vec![0.0f64; nk];
+        let mut d_min_dist = f64::MAX;
+
+        // Phase 1: compute distance for each active cluster
+        for k in 0..nk {
+            if pi[k] > 0.0 {
+                unsafe {
+                    let pt_diff = c_ffi::gsl_vector_alloc(nd);
+                    let pt_res = c_ffi::gsl_vector_alloc(nd);
+
+                    // diff = data[i] - m[k]
+                    let m_row = &m[k * nd..(k + 1) * nd];
+                    for l in 0..nd {
+                        c_ffi::gsl_vector_set(pt_diff, l, data_row[l] - m_row[l]);
+                    }
+
+                    // Build GSL matrix view for sigma[k]
+                    let sigma_k = &sigma[k * nd * nd..(k + 1) * nd * nd];
+                    let gsl_sigma = c_ffi::gsl_matrix_from_flat(sigma_k, nd);
+
+                    // res = sigma[k] * diff  (symmetric matrix-vector product)
+                    c_ffi::gsl_blas_dsymv(CBLAS_LOWER, 1.0, gsl_sigma, pt_diff, 0.0, pt_res);
+
+                    // dist[k] = diff^T * res
+                    c_ffi::gsl_blas_ddot(pt_diff, pt_res, &mut dist[k]);
+
+                    c_ffi::gsl_matrix_free(gsl_sigma);
+                    c_ffi::gsl_vector_free(pt_res);
+                    c_ffi::gsl_vector_free(pt_diff);
+                }
+
+                // Scale and shift — order matches C exactly
+                dist[k] *= nu[k];
+                dist[k] -= l_det[k];
+                dist[k] += dd / beta[k];
+
+                if dist[k] < d_min_dist {
+                    d_min_dist = dist[k];
+                }
+            }
+        }
+
+        // Phase 2: unnormalized responsibilities
+        let mut d_total_z = 0.0f64;
+        for k in 0..nk {
+            if pi[k] > 0.0 {
+                z_row[k] = pi[k] * (-0.5 * (dist[k] - d_min_dist)).exp();
+                d_total_z += z_row[k];
+            } else {
+                z_row[k] = 0.0;
+            }
+        }
+
+        // Phase 3: zero tiny responsibilities, recompute total
+        let mut d_n_total_z = 0.0f64;
+        for k in 0..nk {
+            let d_f = z_row[k] / d_total_z;
+            if d_f < MIN_Z {
+                z_row[k] = 0.0;
+            }
+            d_n_total_z += z_row[k];
+        }
+
+        // Phase 4: normalize
+        if d_n_total_z > 0.0 {
+            for k in 0..nk {
+                z_row[k] /= d_n_total_z;
+            }
+        }
+    }
+}
