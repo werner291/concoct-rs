@@ -14,8 +14,13 @@ python = ["dep:pyo3", "dep:numpy"]
 
 [dependencies]
 rayon = "1"
+clap = { version = "4", features = ["derive"] }
 pyo3 = { version = "0.23", features = ["extension-module"], optional = true }
 numpy = { version = "0.23", optional = true }
+
+[[bin]]
+name = "concoct"
+path = "src/main.rs"
 
 [build-dependencies]
 cc = "1"

@@ -133,7 +133,7 @@
       };
 
       checks.${system} = {
-        rust-ffi = concoctRustTests;
+        rust-tests = concoctRustTests;
 
         pytest-unit-input = mkPytestCheck "unit-input"
           "tests/test_unittest_input.py" {};
