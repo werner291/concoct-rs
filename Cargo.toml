@@ -6,9 +6,16 @@ edition = "2021"
 [lib]
 name = "concoct"
 path = "src/lib.rs"
+# cdylib is only built when the "python" feature is active (for PyO3)
+crate-type = ["lib", "cdylib"]
+
+[features]
+python = ["dep:pyo3", "dep:numpy"]
 
 [dependencies]
 rayon = "1"
+pyo3 = { version = "0.23", features = ["extension-module"], optional = true }
+numpy = { version = "0.23", optional = true }
 
 [build-dependencies]
 cc = "1"

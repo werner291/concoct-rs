@@ -106,10 +106,24 @@
         buildPhaseCargoCommand = "cargo bench --bench bench_leaf";
         installPhaseCommand = "mkdir -p $out";
       });
+
+      pyo3Module = import ./nix/pyo3-module.nix {
+        inherit (pkgs) lib;
+        inherit craneLib rustSrc commonArgs;
+        python3 = python;
+      };
+
+      # Python with both the old Cython module and access to the new PyO3 one
+      testPythonPyo3 = python.withPackages (ps: [
+        concoct
+        ps.numpy
+        ps.pytest
+      ]);
     in
     {
       packages.${system} = {
         default = concoct;
+        pyo3 = pyo3Module;
         docker = dockerImage;
         bench = concoctRustBench;
         codegen-calcdist = pkgs.callPackage ./nix/codegen-calcdist.nix {
@@ -135,6 +149,15 @@
           "tests/test_merge_cutup_clustering.py" { needsIntegrationData = true; };
         pytest-integration-scripts = mkPytestCheck "integration-scripts"
           "tests/test_integration_with_scripts.py" { needsIntegrationData = true; extraPackages = [ pkgs.samtools pkgs.bedtools pkgs.perl ]; };
+
+        # Verify PyO3 vbgmm.fit produces identical output to Cython
+        pyo3-equivalence = pkgs.runCommand "check-pyo3-equivalence" {
+          nativeBuildInputs = [ testPythonPyo3 ];
+        } ''
+          export VBGMM_PYO3_LIB="${pyo3Module}/lib"
+          python3 -m pytest ${./.}/tests/test_pyo3_equivalence.py -v --tb=short
+          touch $out
+        '';
 
         # Verify CONCOCT produces identical output across repeated runs
         # and across thread counts (1 vs 4), given the same seed.
