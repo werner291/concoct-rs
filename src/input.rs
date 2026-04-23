@@ -526,17 +526,15 @@ mod tests {
 
     #[test]
     fn load_composition_matches_python() {
-        // Call Python load_composition, compare normalized+logged values bit-exact.
+        // Call Python load_composition via PyO3, compare bit-exact.
         let py_output = std::process::Command::new("python3")
             .arg("-c")
             .arg(r#"
-from concoct.input import load_composition
-import numpy as np
-comp, lengths = load_composition("tests/test_data/composition.fa", 4, 1000)
-for contig_id in comp.index:
-    row = comp.loc[contig_id].values
-    length = int(lengths[contig_id])
-    # Output as hex float for bit-exact comparison
+import vbgmm
+data, contig_ids, contig_lengths = vbgmm.load_composition("tests/test_data/composition.fa", 4, 1000)
+for i, contig_id in enumerate(contig_ids):
+    row = data[i]
+    length = int(contig_lengths[i])
     vals = " ".join(float.hex(v) for v in row)
     print(f"{contig_id}\t{length}\t{vals}")
 "#)

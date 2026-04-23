@@ -94,6 +94,9 @@
 
       concoctRust = craneLib.buildPackage (commonArgs // {
         inherit cargoArtifacts;
+        # Tests are covered by concoctRustTests (which has testPython
+        # for oracle comparisons). This derivation only builds the binary.
+        doCheck = false;
       });
 
       concoctRustTests = craneLib.cargoTest (commonArgs // {
@@ -156,6 +159,28 @@
           "test_data/large_contigs/coverage_table.tsv"
           "test_data/large_contigs/contigs.fa"
           20;
+
+        # Verify the Rust binary produces identical output to the Python pipeline.
+        rust-binary-small = import ./nix/rust-binary-check.nix {
+          inherit (pkgs) runCommand;
+          inherit concoctRust;
+          src = ./.;
+          name = "small";
+          covFile = "test_data/coverage";
+          compFile = "test_data/composition.fa";
+          clusters = 10;
+          expectedHash = "3bdec94c13d8bba9c0d778381956697f253d178d2338e14ba1e0c07535969058";
+        };
+        rust-binary-large = import ./nix/rust-binary-check.nix {
+          inherit (pkgs) runCommand;
+          inherit concoctRust;
+          src = ./.;
+          name = "large";
+          covFile = "test_data/large_contigs/coverage_table.tsv";
+          compFile = "test_data/large_contigs/contigs.fa";
+          clusters = 20;
+          expectedHash = "9ff1e1f81fa5a593db000da1a8c052c089b3e5b944972048b969d726c92373d2";
+        };
 
         docker = import ./nix/docker-test.nix {
           inherit pkgs dockerImage;
