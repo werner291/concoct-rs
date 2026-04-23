@@ -1,4 +1,5 @@
 import re
+import math
 import logging
 
 import numpy as np
@@ -72,7 +73,7 @@ def load_composition(comp_file, kmer_len, threshold):
 
     #Normalize kmer frequencies to remove effect of contig length
     #log(p_ij) = log[(X_ij +1) / rowSum(X_ij+1)]
-    composition = np.log(composition.divide(composition.sum(axis=1),axis=0))
+    composition = composition.divide(composition.sum(axis=1),axis=0).map(math.log)
     
     logging.info('Successfully loaded composition data.')
     return composition, contig_lengths
@@ -111,8 +112,8 @@ def load_coverage(cov_file, contig_lengths, no_cov_normalization, add_total_cove
         cov_range = temp_cov_range
 
     # Log transform
-    cov.loc[:,cov_range[0]:cov_range[1]] = np.log(
-        cov.loc[:,cov_range[0]:cov_range[1]])
+    cov.loc[:,cov_range[0]:cov_range[1]] = \
+        cov.loc[:,cov_range[0]:cov_range[1]].map(math.log)
 
     logging.info('Successfully loaded coverage data.')
     return cov, cov_range
