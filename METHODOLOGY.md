@@ -269,29 +269,60 @@ benchmarks are deferred until GSL is replaced with Rust implementations.
 
 At this point, the Rust VBGMM can replace the C extension entirely.
 
-### Phase 4: Python integration layer
+### Phase 4: Python integration layer (complete)
 
 Replace the Cython wrapper (`c-concoct/vbgmm.pyx`) with a PyO3 module that
 exposes the Rust VBGMM to the existing Python pipeline. The Python code
 (`concoct/`) remains unchanged — it just calls Rust instead of C.
 
-### Phase 5: Python layer migration
+### Phase 5: Python layer migration (current)
 
 Port the Python modules (`input.py`, `transform.py`, `output.py`, `parser.py`)
 into the Rust binary. The scripts (`cut_up_fasta.py`, etc.) may remain Python or
 be ported depending on need.
 
-### Phase 4: Python integration layer
+#### Correctness standard: end-to-end hash, not bit-exact intermediates
 
-Replace the Cython wrapper (`c-concoct/vbgmm.pyx`) with a PyO3 module that
-exposes the Rust VBGMM to the existing Python pipeline. The Python code
-(`concoct/`) remains unchanged — it just calls Rust instead of C.
+Unlike the C core (Phase 1–3), the Python layer does not have a bit-exact
+equivalence requirement against the original. The Python layer uses pandas and
+numpy, which use algorithms (e.g. numpy's pairwise summation for column/row sums)
+that are impractical to replicate exactly in Rust without importing numpy's C
+internals. Minor float divergence (a few ULP) in intermediate values is expected
+and acceptable.
 
-### Phase 5: Python layer migration
+The correctness standard for Python→Rust replacements is the **end-to-end
+determinism check**: after swapping a Python function for its Rust equivalent,
+run `nix build .#checks.x86_64-linux.determinism-small` and `determinism-large`.
+If the clustering output hash is unchanged, the swap is correct. If it changes,
+investigate — but a hash change does not automatically block the swap if the
+cause is understood (e.g. summation order).
 
-Port the Python modules (`input.py`, `transform.py`, `output.py`, `parser.py`)
-into the Rust binary. The scripts (`cut_up_fasta.py`, etc.) may remain Python or
-be ported depending on need.
+**Atomicity matters.** Each replacement must be its own commit. If the hash
+changes, the cause is exactly one swap. This makes it possible to bisect and
+reason about divergence without ambiguity.
+
+#### Observed: summation order divergence, hash unchanged
+
+Rust's simple left-to-right accumulation for column/row sums produces values
+that differ by a few ULP from numpy's 8-way pairwise summation (used by pandas
+via numpy). Despite this, both the small (349 contigs) and large (4943 contigs)
+determinism checks produced identical clustering hashes after swapping
+`load_coverage` from Python to Rust. The intermediate float differences are
+absorbed by PCA and VBGMM.
+
+This validates the approach: atomic swaps + end-to-end hash checks catch real
+correctness problems while tolerating harmless implementation differences in
+glue code.
+
+#### Future: optimisation phase
+
+The same atomic-commit + hash-tracking approach applies to the planned
+optimisation phase. After the translation is complete and proven, algorithmic
+improvements (e.g. replacing GSL Cholesky, SIMD inner loops, alternative
+convergence criteria) will each be their own commit with determinism checks. If
+an optimisation changes the hash, the commit message documents the change
+explicitly — the reader can see exactly which optimisation altered the output
+and decide whether it's acceptable.
 
 ## Non-goals
 
