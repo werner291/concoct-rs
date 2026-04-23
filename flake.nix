@@ -201,15 +201,15 @@
             ln -s ${integrationTestData} tests/test_data/integration_test_data
           fi
 
-          # Install pre-push hook that runs nix flake check
+          # Install pre-commit hook that runs nix flake check
           if [ -d .git ]; then
             mkdir -p .git/hooks
-            cat > .git/hooks/pre-push << 'HOOK'
+            cat > .git/hooks/pre-commit << 'HOOK'
 #!/usr/bin/env bash
-echo "Running nix flake check before push..."
+echo "Running nix flake check before commit..."
 nix flake check
 HOOK
-            chmod +x .git/hooks/pre-push
+            chmod +x .git/hooks/pre-commit
           fi
         '';
       };
