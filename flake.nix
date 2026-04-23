@@ -113,6 +113,10 @@
         installPhaseCommand = "mkdir -p $out";
       });
 
+      camiDataset = import ./nix/cami-dataset.nix {
+        inherit (pkgs) fetchurl runCommand;
+      };
+
       pyo3Module = import ./nix/pyo3-module.nix {
         inherit (pkgs) lib;
         inherit craneLib rustSrc commonArgs;
@@ -182,6 +186,61 @@
           clusters = 20;
           expectedHash = "9ff1e1f81fa5a593db000da1a8c052c089b3e5b944972048b969d726c92373d2";
         };
+
+        # CAMI I High: 39k contigs × 5 samples. Realistic scale test.
+        # Runs both the Python pipeline and the Rust binary, then
+        # compares their output hashes.
+        # Run explicitly: nix build .#checks.x86_64-linux.equivalence-cami
+        equivalence-cami = pkgs.runCommand "check-equivalence-cami" {
+          nativeBuildInputs = [ testPython concoctRust pkgs.gzip ];
+        } ''
+          gzip -dc ${camiDataset.contigs} > $TMPDIR/contigs.fa
+
+          # Python pipeline (uses PyO3 module under the hood)
+          python_dir=$TMPDIR/python_out
+          python3 -c "
+          import sys; sys.argv = ['concoct',
+            '--coverage_file', '${camiDataset.coverage}',
+            '--composition_file', '$TMPDIR/contigs.fa',
+            '--basename', '$python_dir/',
+            '-c', '400', '--no_total_coverage', '--seed', '1', '--threads', '1']
+          exec(open('${./.}/bin/concoct').read())
+          " 2>/dev/null
+          py_hash=$(sha256sum $python_dir/clustering_gt1000.csv | cut -d' ' -f1)
+          echo "Python hash: $py_hash"
+
+          # Rust binary
+          rust_dir=$TMPDIR/rust_out
+          concoct --coverage_file ${camiDataset.coverage} \
+                  --composition_file $TMPDIR/contigs.fa \
+                  --basename $rust_dir/ \
+                  -c 400 --no_total_coverage --seed 1 --threads 1 2>/dev/null
+          rs_hash=$(sha256sum $rust_dir/clustering_gt1000.csv | cut -d' ' -f1)
+          echo "Rust hash:   $rs_hash"
+
+          if [ "$py_hash" != "$rs_hash" ]; then
+            echo "MISMATCH: Python and Rust produced different output on CAMI I High"
+            diff <(sort $python_dir/clustering_gt1000.csv) <(sort $rust_dir/clustering_gt1000.csv) | head -20
+            exit 1
+          fi
+
+          # Also verify Rust is deterministic across thread counts
+          rust_dir4=$TMPDIR/rust_out_t4
+          concoct --coverage_file ${camiDataset.coverage} \
+                  --composition_file $TMPDIR/contigs.fa \
+                  --basename $rust_dir4/ \
+                  -c 400 --no_total_coverage --seed 1 --threads 4 2>/dev/null
+          rs4_hash=$(sha256sum $rust_dir4/clustering_gt1000.csv | cut -d' ' -f1)
+          echo "Rust t=4:    $rs4_hash"
+
+          if [ "$rs_hash" != "$rs4_hash" ]; then
+            echo "MISMATCH: Rust binary not deterministic across thread counts"
+            exit 1
+          fi
+
+          echo "Python and Rust produce identical output on CAMI I High: $py_hash"
+          touch $out
+        '';
 
         docker = import ./nix/docker-test.nix {
           inherit pkgs dockerImage;
