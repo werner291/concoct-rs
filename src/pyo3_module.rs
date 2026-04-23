@@ -101,6 +101,81 @@ fn load_composition<'py>(
     Ok((array, result.contig_ids, lengths_f64))
 }
 
+/// Load coverage from a TSV file: parse, filter, pseudo-count,
+/// normalize, and log-transform.
+///
+/// Parameters
+/// ----------
+/// cov_file : str
+///     Path to the coverage TSV file.
+/// contig_ids : list[str]
+///     Contig IDs to keep (from composition loading).
+/// contig_lengths : list[float]
+///     Corresponding contig lengths (same order as contig_ids).
+/// no_cov_normalization : bool
+///     If True, skip per-sample and per-contig normalization.
+/// add_total_coverage : bool
+///     If True, append a total_coverage column.
+/// read_length : float
+///     Read length for pseudo-count computation.
+///
+/// Returns
+/// -------
+/// (data, filtered_contig_ids, column_names, cov_range_start, cov_range_end)
+///     data: 2-D numpy array (n_contigs × n_columns)
+///     filtered_contig_ids: contig IDs in row order (coverage file order, filtered)
+///     column_names: list of column name strings
+///     cov_range_start, cov_range_end: column range for downstream use
+///
+/// Ports: concoct/input.py load_coverage (L41-79)
+#[pyfunction]
+#[pyo3(signature = (cov_file, contig_ids, contig_lengths, no_cov_normalization, add_total_coverage, read_length))]
+fn load_coverage_rs<'py>(
+    py: Python<'py>,
+    cov_file: &str,
+    contig_ids: Vec<String>,
+    contig_lengths: Vec<f64>,
+    no_cov_normalization: bool,
+    add_total_coverage: bool,
+    read_length: f64,
+) -> PyResult<(Bound<'py, PyArray2<f64>>, Vec<String>, Vec<String>, String, String)> {
+    let file = std::fs::File::open(cov_file)
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{cov_file}: {e}")))?;
+    let reader = std::io::BufReader::new(file);
+
+    let lengths_map: std::collections::HashMap<String, f64> = contig_ids
+        .into_iter()
+        .zip(contig_lengths)
+        .collect();
+
+    let result = input::load_coverage(
+        reader,
+        &lengths_map,
+        no_cov_normalization,
+        add_total_coverage,
+        read_length,
+    );
+
+    let n_contigs = result.contig_ids.len();
+    let n_cols = result.n_columns;
+    let array = if n_contigs > 0 {
+        PyArray2::from_vec2(
+            py,
+            &result.data.chunks(n_cols).map(|row| row.to_vec()).collect::<Vec<_>>(),
+        )?
+    } else {
+        PyArray2::from_vec2(py, &Vec::<Vec<f64>>::new())?
+    };
+
+    Ok((
+        array,
+        result.contig_ids,
+        result.column_names,
+        result.cov_range.0,
+        result.cov_range.1,
+    ))
+}
+
 /// Python module: `vbgmm`
 ///
 /// Drop-in replacement for the Cython vbgmm module.
@@ -109,5 +184,6 @@ fn load_composition<'py>(
 fn pyo3_vbgmm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(fit, m)?)?;
     m.add_function(wrap_pyfunction!(load_composition, m)?)?;
+    m.add_function(wrap_pyfunction!(load_coverage_rs, m)?)?;
     Ok(())
 }

@@ -4,24 +4,13 @@ import numpy as np
 import pandas as p
 import os
 from Bio import SeqIO
-from concoct.input import _normalize_per_sample, _normalize_per_contig, load_composition
+from concoct.input import load_composition
+
+# test_normalize_per_contig and test_normalize_per_samples removed:
+# normalization is now handled in Rust (src/input.rs load_coverage),
+# tested via the determinism checks.
 
 class TestInput(object):
-    def setup_method(self):
-        self.C = p.DataFrame(np.array([[0., 0.7], [5.5, .7]]))
-
-    def test_normalize_per_contig(self):
-        C_norm = _normalize_per_contig(self.C)
-
-        C_correct = p.DataFrame(np.array([[0., 1.],[5.5/6.2, 0.7/6.2]]))
-        assert_true(np.linalg.norm(C_norm-C_correct) < 0.0001)
-
-    def test_normalize_per_samples(self):
-        C_norm = _normalize_per_sample(self.C)
-
-        C_correct = p.DataFrame(np.array([[0., 0.5],[1,0.5]]))
-        assert_true(np.linalg.norm(C_norm-C_correct) < 0.0001)
-
     def test_load_composition(self):
         # Get the directory path of this test file
         f = os.path.dirname(os.path.abspath(__file__))
