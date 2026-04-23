@@ -4,7 +4,6 @@ from __future__ import print_function
 import sys
 import logging
 import vbgmm
-import numpy as np
 
 
 from concoct.output import Output
@@ -38,7 +37,7 @@ def main(args):
 
     # PCA (Rust via LAPACK dgesdd)
     transform_filter, pca_components, n_pca = vbgmm.perform_pca(
-        np.ascontiguousarray(data, dtype=np.float64),
+        data,
         float(args.pca_components),
     )
 
@@ -70,7 +69,7 @@ def main(args):
         args.threads, args.iterations))
 
     assign = vbgmm.fit(
-        np.ascontiguousarray(transform_filter, dtype=np.float64),
+        transform_filter,
         int(args.clusters),
         int(args.seed),
         int(args.threads),
