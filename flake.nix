@@ -42,6 +42,7 @@
         concoct
         bcbio-gff
         ps.biopython
+        ps.pandas
         ps.pytest
       ]);
 
