@@ -29,6 +29,9 @@ let
   cdylib = craneLib.buildPackage (pyo3CommonArgs // {
     cargoArtifacts = pyo3CargoArtifacts;
     pnameSuffix = "-pyo3";
+    # Tests are covered by the rust-tests check (which has testPython).
+    # This derivation only needs to produce the .so.
+    doCheck = false;
 
     installPhaseCommand = ''
       mkdir -p $out/lib

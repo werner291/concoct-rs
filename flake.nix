@@ -24,18 +24,19 @@
         src = ./.;
         format = "setuptools";
 
-        nativeBuildInputs = [ python.pkgs.cython ];
-
-        buildInputs = [ pkgs.gsl ];
-
         propagatedBuildInputs = with python.pkgs; [
           numpy
           scipy
           pandas
-          biopython
           scikit-learn
           setuptools
         ];
+
+        # The vbgmm extension is now provided by the Rust PyO3 module
+        # instead of the old Cython/C build.
+        postInstall = ''
+          cp ${pyo3Module}/lib/*.so $out/${python.sitePackages}/
+        '';
 
         doCheck = false;
       };
@@ -43,6 +44,7 @@
       testPython = python.withPackages (ps: [
         concoct
         bcbio-gff
+        ps.biopython
         ps.pytest
       ]);
 
@@ -116,12 +118,6 @@
         python3 = python;
       };
 
-      # Python with both the old Cython module and access to the new PyO3 one
-      testPythonPyo3 = python.withPackages (ps: [
-        concoct
-        ps.numpy
-        ps.pytest
-      ]);
     in
     {
       packages.${system} = {
@@ -152,15 +148,6 @@
           "tests/test_merge_cutup_clustering.py" { needsIntegrationData = true; };
         pytest-integration-scripts = mkPytestCheck "integration-scripts"
           "tests/test_integration_with_scripts.py" { needsIntegrationData = true; extraPackages = [ pkgs.samtools pkgs.bedtools pkgs.perl ]; };
-
-        # Verify PyO3 vbgmm.fit produces identical output to Cython
-        pyo3-equivalence = pkgs.runCommand "check-pyo3-equivalence" {
-          nativeBuildInputs = [ testPythonPyo3 ];
-        } ''
-          export VBGMM_PYO3_LIB="${pyo3Module}/lib"
-          python3 -m pytest ${./.}/tests/test_pyo3_equivalence.py -v --tb=short
-          touch $out
-        '';
 
         # Verify CONCOCT produces identical output across repeated runs
         # and across thread counts (1 vs 4), given the same seed.
