@@ -28,7 +28,6 @@
           numpy
           scipy
           pandas
-          scikit-learn
           setuptools
         ];
 
@@ -88,7 +87,7 @@
       commonArgs = {
         src = rustSrc;
         nativeBuildInputs = [ pkgs.pkg-config ];
-        buildInputs = [ pkgs.gsl ];
+        buildInputs = [ pkgs.gsl pkgs.lapack ];
         # Pin target-cpu to baseline to avoid AVX float divergence
         RUSTFLAGS = "-C target-cpu=x86-64";
       };
@@ -170,6 +169,7 @@
         packages = [
           testPython
           pkgs.gsl
+          pkgs.lapack
           pkgs.gcc
           pkgs.bedtools
           pkgs.samtools
@@ -182,8 +182,8 @@
 
         shellHook = ''
           export C_INCLUDE_PATH="${pkgs.gsl}/include:''${C_INCLUDE_PATH:-}"
-          export LIBRARY_PATH="${pkgs.gsl}/lib:''${LIBRARY_PATH:-}"
-          export LD_LIBRARY_PATH="${pkgs.gsl}/lib:''${LD_LIBRARY_PATH:-}"
+          export LIBRARY_PATH="${pkgs.gsl}/lib:${pkgs.lapack}/lib:''${LIBRARY_PATH:-}"
+          export LD_LIBRARY_PATH="${pkgs.gsl}/lib:${pkgs.lapack}/lib:''${LD_LIBRARY_PATH:-}"
           if [ ! -e tests/test_data/integration_test_data ]; then
             ln -s ${integrationTestData} tests/test_data/integration_test_data
           fi

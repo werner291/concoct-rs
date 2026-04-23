@@ -11,6 +11,7 @@ use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray2};
 use pyo3::prelude::*;
 
 use crate::input;
+use crate::pca;
 use crate::vbgmm;
 
 /// Default number of VB iterations.
@@ -176,6 +177,58 @@ fn load_coverage_rs<'py>(
     ))
 }
 
+/// Perform PCA on a data matrix.
+///
+/// Parameters
+/// ----------
+/// data : numpy.ndarray[float64, ndim=2, order='C']
+///     Data matrix, shape (n_samples, n_features).
+/// n_components : float
+///     If < 1.0: minimum cumulative variance ratio to retain.
+///     If >= 1.0: exact number of components.
+///
+/// Returns
+/// -------
+/// (transformed, components, n_components_selected)
+///     transformed: 2-D numpy array (n_samples × n_components_selected)
+///     components: 2-D numpy array (n_components_selected × n_features)
+///     n_components_selected: int
+#[pyfunction]
+#[pyo3(signature = (data, n_components))]
+fn perform_pca<'py>(
+    py: Python<'py>,
+    data: PyReadonlyArray2<'py, f64>,
+    n_components: f64,
+) -> PyResult<(Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<f64>>, usize)> {
+    let array = data.as_array();
+    let n_samples = array.nrows();
+    let n_features = array.ncols();
+
+    let flat = array
+        .as_slice_memory_order()
+        .expect("data must be C-contiguous");
+
+    let result = pca::pca(flat, n_samples, n_features, n_components);
+
+    let transformed = PyArray2::from_vec2(
+        py,
+        &result.transformed
+            .chunks(result.n_components)
+            .map(|row| row.to_vec())
+            .collect::<Vec<_>>(),
+    )?;
+
+    let components = PyArray2::from_vec2(
+        py,
+        &result.components
+            .chunks(result.n_features)
+            .map(|row| row.to_vec())
+            .collect::<Vec<_>>(),
+    )?;
+
+    Ok((transformed, components, result.n_components))
+}
+
 /// Python module: `vbgmm`
 ///
 /// Drop-in replacement for the Cython vbgmm module.
@@ -185,5 +238,6 @@ fn pyo3_vbgmm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(fit, m)?)?;
     m.add_function(wrap_pyfunction!(load_composition, m)?)?;
     m.add_function(wrap_pyfunction!(load_coverage_rs, m)?)?;
+    m.add_function(wrap_pyfunction!(perform_pca, m)?)?;
     Ok(())
 }

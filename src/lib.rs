@@ -10,6 +10,9 @@ pub mod vbgmm;
 /// Ports concoct/input.py.
 pub mod input;
 
+/// PCA via LAPACK SVD. Replaces sklearn.decomposition.PCA.
+pub mod pca;
+
 /// PyO3 module exposing vbgmm.fit to Python.
 /// Replaces the Cython wrapper (c-concoct/vbgmm.pyx).
 #[cfg(feature = "python")]

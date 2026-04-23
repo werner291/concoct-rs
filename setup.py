@@ -25,8 +25,7 @@ setup(name='concoct',
       zip_safe=False,
       install_requires=['numpy>=1.7.1',
                         'scipy>=0.12.0',
-                        'pandas>=0.11.0',
-                        'scikit-learn>=0.13.1'],
+                        'pandas>=0.11.0'],
       entry_points="""
       # -*- Entry points: -*-
       """,

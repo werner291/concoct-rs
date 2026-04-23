@@ -16,6 +16,7 @@ fn main() {
     println!("cargo:rustc-link-lib=gsl");
     println!("cargo:rustc-link-lib=gslcblas");
     println!("cargo:rustc-link-lib=gomp");
+    println!("cargo:rustc-link-lib=lapack");
     println!("cargo:rerun-if-changed=c-concoct/c_vbgmm_fit.c");
     println!("cargo:rerun-if-changed=c-concoct/c_vbgmm_fit.h");
     println!("cargo:rerun-if-changed=c-concoct/ffi_wrappers.c");
