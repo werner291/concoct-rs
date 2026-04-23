@@ -146,13 +146,9 @@ pub fn load_composition<R: BufRead>(
         let row_sum: f64 = contig.counts.iter().sum();
 
         // log(count / row_sum) for each feature.
-        //
-        // NOTE: Rust's f64::ln() can differ from numpy's np.log() by 1 ULP.
-        // Numpy links Intel SVML (__svml_log8_ha) which is a different
-        // implementation from both Rust's ln() and libc's log().
-        // Confirmed 2026-04-23: libm log and math.log agree with Rust,
-        // numpy disagrees by 1 ULP on specific inputs (e.g. 120/20627).
-        // End-to-end output hash is the real equivalence proof.
+        // Both this code and Python's input.py use libc's scalar log()
+        // (Rust via f64::ln(), Python via math.log), so outputs are
+        // bit-identical.
         for &count in &contig.counts {
             data.push((count / row_sum).ln());
         }
@@ -321,14 +317,10 @@ for contig_id in comp.index:
             let row = &result.data[row_start..row_start + result.n_features];
 
             for (j, (&r, &p)) in row.iter().zip(py_vals.iter()).enumerate() {
-                // Allow ≤1 ULP: numpy uses its own log implementation
-                // which can differ from Rust's f64::ln() by 1 ULP.
-                // End-to-end output hash is the real equivalence proof.
-                let r_bits = r.to_bits();
-                let p_bits = p.to_bits();
-                let diff = if r_bits > p_bits { r_bits - p_bits } else { p_bits - r_bits };
-                assert!(diff <= 1,
-                    "contig {py_id} feature {j}: Rust={r} Python={p} ({diff} ULP)");
+                // Bit-exact: both Python (math.log) and Rust (f64::ln)
+                // use libc's scalar log().
+                assert_eq!(r.to_bits(), p.to_bits(),
+                    "contig {py_id} feature {j}: Rust={r} Python={p}");
             }
         }
     }
