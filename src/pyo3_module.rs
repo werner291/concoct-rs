@@ -7,10 +7,10 @@
 //
 // Returns a 1-D numpy array of int32 cluster assignments.
 
-use numpy::ndarray::ShapeBuilder;
-use numpy::{IntoPyArray, PyArray1, PyReadonlyArray2};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray2};
 use pyo3::prelude::*;
 
+use crate::input;
 use crate::vbgmm;
 
 /// Default number of VB iterations.
@@ -70,6 +70,37 @@ fn fit<'py>(
     assignments.into_pyarray(py)
 }
 
+/// Load composition from a FASTA file: parse sequences, count k-mers,
+/// normalize per-contig, and log-transform.
+///
+/// Returns (data, contig_ids, contig_lengths) where:
+/// - data: 2-D numpy array, shape (n_contigs, n_features), float64
+/// - contig_ids: list of contig ID strings
+/// - contig_lengths: list of contig lengths (as floats, matching pandas Series dtype)
+///
+/// Ports: concoct/input.py load_composition (L65-78)
+#[pyfunction]
+#[pyo3(signature = (comp_file, kmer_len, length_threshold))]
+fn load_composition<'py>(
+    py: Python<'py>,
+    comp_file: &str,
+    kmer_len: usize,
+    length_threshold: usize,
+) -> PyResult<(Bound<'py, PyArray2<f64>>, Vec<String>, Vec<f64>)> {
+    let file = std::fs::File::open(comp_file)
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{comp_file}: {e}")))?;
+    let reader = std::io::BufReader::new(file);
+    let result = input::load_composition(reader, kmer_len, length_threshold);
+
+    let array = PyArray2::from_vec2(
+        py,
+        &result.data.chunks(result.n_features).map(|row| row.to_vec()).collect::<Vec<_>>(),
+    )?;
+    let lengths_f64: Vec<f64> = result.contig_lengths.iter().map(|&l| l as f64).collect();
+
+    Ok((array, result.contig_ids, lengths_f64))
+}
+
 /// Python module: `vbgmm`
 ///
 /// Drop-in replacement for the Cython vbgmm module.
@@ -77,5 +108,6 @@ fn fit<'py>(
 #[pyo3(name = "vbgmm")]
 fn pyo3_vbgmm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(fit, m)?)?;
+    m.add_function(wrap_pyfunction!(load_composition, m)?)?;
     Ok(())
 }
