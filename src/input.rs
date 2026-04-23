@@ -313,6 +313,115 @@ pub fn load_coverage<R: BufRead>(
     }
 }
 
+/// Result of loading and joining composition + coverage data.
+pub struct JoinedData {
+    /// Flat row-major matrix, n_contigs × n_columns.
+    pub data: Vec<f64>,
+    /// Contig IDs, in row order (composition file order, filtered to intersection).
+    pub contig_ids: Vec<String>,
+    /// Column names: composition feature indices ("0","1",...) then coverage sample names.
+    pub column_names: Vec<String>,
+    /// Number of contigs (rows).
+    pub n_contigs: usize,
+    /// Number of columns (composition features + coverage columns).
+    pub n_columns: usize,
+}
+
+/// Load composition and optionally coverage, then inner-join on contig ID.
+///
+/// Ports the data flow in bin/concoct lines 20-30:
+///   composition, cov, cov_range = load_data(args)
+///   joined = composition.join(cov.loc[:,cov_range[0]:cov_range[1]], how="inner")
+///
+/// Row order follows composition (FASTA order), keeping only contigs present
+/// in both datasets.
+pub fn load_and_join<R1: BufRead, R2: BufRead>(
+    comp_reader: R1,
+    cov_reader: Option<R2>,
+    kmer_len: usize,
+    length_threshold: usize,
+    no_cov_normalization: bool,
+    add_total_coverage: bool,
+    read_length: f64,
+) -> JoinedData {
+    let comp = load_composition(comp_reader, kmer_len, length_threshold);
+
+    if let Some(cov_reader) = cov_reader {
+        // Build contig_lengths map for coverage loading
+        let contig_lengths: HashMap<String, f64> = comp
+            .contig_ids
+            .iter()
+            .zip(comp.contig_lengths.iter())
+            .map(|(id, &len)| (id.clone(), len as f64))
+            .collect();
+
+        let cov = load_coverage(
+            cov_reader,
+            &contig_lengths,
+            no_cov_normalization,
+            add_total_coverage,
+            read_length,
+        );
+
+        // Build coverage index for O(1) lookup
+        let cov_index: HashMap<&str, usize> = cov
+            .contig_ids
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (id.as_str(), i))
+            .collect();
+
+        let n_comp_cols = comp.n_features;
+        let n_cov_cols = cov.n_columns;
+        let n_columns = n_comp_cols + n_cov_cols;
+
+        let mut data = Vec::new();
+        let mut contig_ids = Vec::new();
+
+        // Inner join: composition order, only contigs present in both
+        for (i, comp_id) in comp.contig_ids.iter().enumerate() {
+            if let Some(&cov_idx) = cov_index.get(comp_id.as_str()) {
+                let comp_row =
+                    &comp.data[i * n_comp_cols..(i + 1) * n_comp_cols];
+                let cov_row =
+                    &cov.data[cov_idx * n_cov_cols..(cov_idx + 1) * n_cov_cols];
+                data.extend_from_slice(comp_row);
+                data.extend_from_slice(cov_row);
+                contig_ids.push(comp_id.clone());
+            }
+        }
+
+        let n_contigs = contig_ids.len();
+
+        // Column names: "0","1",...,"135","sample_1",...,"sample_16"[,"total_coverage"]
+        let mut column_names: Vec<String> =
+            (0..n_comp_cols).map(|i| i.to_string()).collect();
+        column_names.extend(cov.column_names);
+
+        JoinedData {
+            data,
+            contig_ids,
+            column_names,
+            n_contigs,
+            n_columns,
+        }
+    } else {
+        // Composition only (no coverage file)
+        let n_contigs = comp.contig_ids.len();
+        let n_columns = comp.n_features;
+        let column_names: Vec<String> =
+            (0..n_columns).map(|i| i.to_string()).collect();
+
+        JoinedData {
+            data: comp.data,
+            contig_ids: comp.contig_ids,
+            column_names,
+            n_contigs,
+            n_columns,
+        }
+    }
+}
+
 /// Generate a mapping from k-mer tuples to canonical feature indices.
 /// Reverse complement k-mers map to the same index.
 ///

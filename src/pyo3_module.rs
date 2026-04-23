@@ -177,6 +177,65 @@ fn load_coverage_rs<'py>(
     ))
 }
 
+/// Load composition and optionally coverage, join, and return as numpy arrays.
+///
+/// Returns (data, contig_ids, column_names) where:
+/// - data: 2-D numpy array (n_contigs × n_columns)
+/// - contig_ids: list of contig ID strings
+/// - column_names: list of column name strings
+#[pyfunction]
+#[pyo3(signature = (comp_file, cov_file, kmer_len, length_threshold, no_cov_normalization, add_total_coverage, read_length))]
+fn load_and_join<'py>(
+    py: Python<'py>,
+    comp_file: &str,
+    cov_file: Option<&str>,
+    kmer_len: usize,
+    length_threshold: usize,
+    no_cov_normalization: bool,
+    add_total_coverage: bool,
+    read_length: f64,
+) -> PyResult<(Bound<'py, PyArray2<f64>>, Vec<String>, Vec<String>)> {
+    let comp_reader = std::io::BufReader::new(
+        std::fs::File::open(comp_file)
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{comp_file}: {e}")))?,
+    );
+
+    let cov_reader = match cov_file {
+        Some(path) => Some(std::io::BufReader::new(
+            std::fs::File::open(path)
+                .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{path}: {e}")))?,
+        )),
+        None => None,
+    };
+
+    let result = input::load_and_join(
+        comp_reader,
+        cov_reader,
+        kmer_len,
+        length_threshold,
+        no_cov_normalization,
+        add_total_coverage,
+        read_length,
+    );
+
+    if result.n_contigs == 0 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "No contigs pass the length threshold",
+        ));
+    }
+
+    let array = PyArray2::from_vec2(
+        py,
+        &result
+            .data
+            .chunks(result.n_columns)
+            .map(|row| row.to_vec())
+            .collect::<Vec<_>>(),
+    )?;
+
+    Ok((array, result.contig_ids, result.column_names))
+}
+
 /// Perform PCA on a data matrix.
 ///
 /// Parameters
@@ -238,6 +297,7 @@ fn pyo3_vbgmm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(fit, m)?)?;
     m.add_function(wrap_pyfunction!(load_composition, m)?)?;
     m.add_function(wrap_pyfunction!(load_coverage_rs, m)?)?;
+    m.add_function(wrap_pyfunction!(load_and_join, m)?)?;
     m.add_function(wrap_pyfunction!(perform_pca, m)?)?;
     Ok(())
 }

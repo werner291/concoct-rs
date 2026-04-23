@@ -26,7 +26,6 @@
 
         propagatedBuildInputs = with python.pkgs; [
           numpy
-          pandas
           setuptools
         ];
 

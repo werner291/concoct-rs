@@ -23,8 +23,7 @@ setup(name='concoct',
                "scripts/merge_cutup_clustering.py", "scripts/extract_fasta_bins.py"],
       include_package_data=True,
       zip_safe=False,
-      install_requires=['numpy>=1.7.1',
-                        'pandas>=0.11.0'],
+      install_requires=['numpy>=1.7.1'],
       entry_points="""
       # -*- Entry points: -*-
       """,

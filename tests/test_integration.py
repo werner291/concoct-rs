@@ -5,7 +5,7 @@ from os import listdir
 import os
 import sys
 import subprocess
-import pandas as p
+import csv
 
 file_path = os.path.realpath(__file__)
 test_dir_path = os.path.dirname(file_path)
@@ -249,19 +249,21 @@ class TestCMD(object):
     def test_log_coverage(self):
         self.run_command()
         original_coverage_data_path = os.path.join(tmp_basename_dir,'original_data_gt1000.csv')
-        df = p.io.parsers.read_csv(original_coverage_data_path,index_col=0,sep=',')
-
+        with open(original_coverage_data_path) as f:
+            reader = csv.DictReader(f)
+            row = next(reader)
+            calc_pseudo_cov = float(row['sample_1'])
         true_pseudo_cov = -1.3143
-        calc_pseudo_cov = df.sample_1[0]
         assert_almost_equal(true_pseudo_cov,calc_pseudo_cov,places=4)
 
     def test_log_coverage_no_cov_normalization(self):
         self.run_command(tags=["--no_cov_normalization"])
         original_coverage_data_path = os.path.join(tmp_basename_dir,'original_data_gt1000.csv')
-        df = p.io.parsers.read_csv(original_coverage_data_path,index_col=0,sep=',')
-
+        with open(original_coverage_data_path) as f:
+            reader = csv.DictReader(f)
+            row = next(reader)
+            calc_pseudo_cov = float(row['sample_1'])
         true_pseudo_cov = -1.8107
-        calc_pseudo_cov = df.sample_1[0]
         assert_almost_equal(true_pseudo_cov,calc_pseudo_cov,places=4)
 
 
